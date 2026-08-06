@@ -13,7 +13,7 @@ class Spider(Spider):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": self.host + "/",
-            "Origin": self.host
+            "X-Requested-With": "XMLHttpRequest"
         }
 
     def getName(self):
@@ -62,11 +62,10 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        episodes = []
-        seen_ep = set()
-        
-        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        # ดึงรายชื่อตอน
         ep_links = []
+        seen_ep = set()
+        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
         for link, text in re.findall(pattern, html, re.I | re.S):
             clean_text = self.clean(text)
             ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)?\s*(\d+)', clean_text, re.I)
@@ -77,12 +76,19 @@ class Spider(Spider):
                     ep_links.append((int(ep_num), self.fix(link)))
 
         ep_links.sort(key=lambda x: x[0])
+        if not ep_links:
+            ep_links = [(1, vid)]
 
-        for ep_num, ep_url in ep_links:
-            episodes.append(f"ตอนที่ {ep_num}${ep_url}")
+        # สร้างแท็บตัวเล่น 4 สำรอง
+        play_flags = ["สำรอง 1", "สำรอง 2", "สำรอง 3", "สำรอง 4"]
+        play_urls = []
 
-        if not episodes:
-            episodes.append(f"เล่นMain${vid}")
+        for server_idx in range(1, 5):
+            ep_list = []
+            for ep_num, ep_url in ep_links:
+                # ส่งข้อมูลแบบ url#server_index ให้ playerContent นำไปประมวลผลต่อ
+                ep_list.append(f"ตอนที่ {ep_num}${ep_url}#srv{server_idx}")
+            play_urls.append("#".join(ep_list))
 
         return {
             "list": [{
@@ -97,8 +103,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": "HubSeriesHD",
-                "vod_play_url": "#".join(episodes)
+                "vod_play_from": "$$$".join(play_flags),
+                "vod_play_url": "$$$".join(play_urls)
             }]
         }
 
@@ -108,10 +114,15 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
-    def parse_ok_ru(self, video_id):
-        """ยิง API ตรงข้าม Webview ดึง Stream MP4/M3U8 จาก OK.ru"""
+    def parse_ok_ru(self, embed_url):
+        """เจาะเอา Direct Link จาก OK.ru"""
         try:
-            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={video_id}"
+            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
+            if not video_id:
+                return ""
+            vid = video_id.group(1)
+            
+            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={vid}"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                 "X-Requested-With": "XMLHttpRequest"
@@ -135,68 +146,95 @@ class Spider(Spider):
         return ""
 
     def playerContent(self, flag, id, vipFlags):
+        # แยก URL และ Server Index
+        srv_idx = 1
         url = id
+        if "#srv" in id:
+            parts = id.split("#srv")
+            url = parts[0]
+            srv_idx = int(parts[1])
 
         try:
-            # 1. โหลด HTML ของตอนเพื่อค้นหา iframe ตัวเล่นจริง
             html = self.get(url)
             
-            # ดึง iframe ทั้งหมดในหน้า
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            # ค้นหาปุ่มสำรอง/เซิร์ฟเวอร์ย่อยใน DOM HTML (data-id, data-post, data-server หรือ data-link)
+            btn_matches = re.findall(r'<[^>]+class=["\'][^"\']*(?:btn-server|server|player-option)[^"\']*["\'][^>]*>', html, re.I)
             
-            for iframe_url in iframes:
-                iframe_url = self.fix(iframe_url)
+            # 1. ลองแกะลิงก์ตรงตามลำดับเซิร์ฟเวอร์ที่เลือก (สำรอง 1-4)
+            server_urls = []
+            
+            # ลองหา attributes ที่ซ่อน URL ไว้ในปุ่ม
+            for attr in ["data-link", "data-src", "data-url", "value"]:
+                found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
+                for f in found:
+                    f_fix = self.fix(f)
+                    if not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup"]) and f_fix not in server_urls:
+                        server_urls.append(f_fix)
+
+            # หากพบ URL ตามลำดับสำรอง
+            selected_url = ""
+            if len(server_urls) >= srv_idx:
+                selected_url = server_urls[srv_idx - 1]
+            elif len(server_urls) > 0:
+                selected_url = server_urls[0]
+
+            # 2. ถ้าเจอ iframe จากตัวเลือก
+            if not selected_url:
+                iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+                valid_iframes = []
+                for iframe in iframes:
+                    iframe_fix = self.fix(iframe)
+                    if not any(x in iframe_fix.lower() for x in ["ufa", "banner", "ads", "popup"]):
+                        valid_iframes.append(iframe_fix)
                 
-                # กรอง iframe โฆษณา UFABET / Banner ทิ้งทันที
-                if any(x in iframe_url.lower() for x in ["ufa", "banner", "ads", "popup"]):
-                    continue
+                if len(valid_iframes) >= srv_idx:
+                    selected_url = valid_iframes[srv_idx - 1]
+                elif len(valid_iframes) > 0:
+                    selected_url = valid_iframes[0]
 
-                # --- 2. ถ้าเจอ OK.ru ให้แก้เข้า API ตรง ---
-                ok_match = re.search(r'ok\.ru/(?:videoembed|video)/(\d+)', iframe_url)
-                if ok_match:
-                    video_id = ok_match.group(1)
-                    direct_url = self.parse_ok_ru(video_id)
-                    if direct_url:
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": direct_url,
-                            "header": {
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                                "Referer": "https://ok.ru/"
-                            }
-                        }
+            if not selected_url:
+                selected_url = url
 
-                # --- 3. ถ้าเจอ Nanoplayer / SV3 ---
-                if any(x in iframe_url for x in ["nanoplayer", "player.php", "sv3.php"]):
-                    # ดึง HTML ในตัว nanoplayer เพื่อหาไฟล์ hls2.php / m3u8 จริง
-                    nano_html = self.get(iframe_url)
-                    m3u8_match = re.search(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', nano_html) or \
-                                re.search(r'["\'](https?://[^"\']+/hls2\.php[^"\']*)["\']', nano_html)
-                    
-                    if m3u8_match:
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": m3u8_match.group(1),
-                            "header": {
-                                "User-Agent": self.headers["User-Agent"],
-                                "Referer": iframe_url
-                            }
-                        }
-                    
-                    # ถ้าแกะสาย Nanoplayer ตรงไม่ได้ ค่อยส่ง iframe nanoplayer ให้ส่งเล่นแบบ Parse
+            # 3. จัดการเล่นกรณีเป็น OK.ru
+            if "ok.ru" in selected_url:
+                direct_ok = self.parse_ok_ru(selected_url)
+                if direct_ok:
                     return {
-                        "parse": 1,
+                        "parse": 0,
                         "playUrl": "",
-                        "url": iframe_url,
-                        "header": {"User-Agent": self.headers["User-Agent"], "Referer": url}
+                        "url": direct_ok,
+                        "header": {"User-Agent": "Mozilla/5.0", "Referer": "https://ok.ru/"}
                     }
+                return {
+                    "parse": 1,
+                    "playUrl": "",
+                    "url": selected_url,
+                    "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
+                }
+
+            # 4. จัดการเล่นกรณีเป็น Nanoplayer หรือ M3U8
+            if self.isVideoFormat(selected_url):
+                return {
+                    "parse": 0,
+                    "playUrl": "",
+                    "url": selected_url,
+                    "header": self.headers
+                }
+
+            # ถ้าเป็น iframe เครื่องเล่นอื่นๆ ส่งให้แอป Parse บน iframe ตรง
+            return {
+                "parse": 1,
+                "playUrl": "",
+                "url": selected_url,
+                "header": {
+                    "User-Agent": self.headers["User-Agent"],
+                    "Referer": url
+                }
+            }
 
         except Exception:
             pass
 
-        # Fallback กรณีไม่เจอ iframe ใดๆ
         return {
             "parse": 1,
             "playUrl": "",

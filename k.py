@@ -2,6 +2,7 @@
 import sys
 import re
 import requests
+import json
 from urllib.parse import quote, unquote
 sys.path.append('..')
 from base.spider import Spider
@@ -10,7 +11,7 @@ class Spider(Spider):
     def init(self, extend=""):
         self.host = "https://hubserieshd.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": self.host + "/",
             "Origin": self.host
         }
@@ -107,21 +108,100 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
+    def parse_ok_ru(self, video_id):
+        """ยิง API ตรงข้าม Webview ดึง Stream MP4/M3U8 จาก OK.ru"""
+        try:
+            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={video_id}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            res = requests.post(api_url, headers=headers, timeout=8, verify=False)
+            data = res.json()
+            
+            if "hlsManifestUrl" in data:
+                return data["hlsManifestUrl"]
+            
+            if "videos" in data:
+                videos = data["videos"]
+                for quality in ["full", "hd", "sd", "low"]:
+                    for v in videos:
+                        if v.get("name") == quality and "url" in v:
+                            return v["url"]
+                if len(videos) > 0 and "url" in videos[-1]:
+                    return videos[-1]["url"]
+        except Exception:
+            pass
+        return ""
+
     def playerContent(self, flag, id, vipFlags):
         url = id
-        
-        # ส่งให้แอปเปิด Sniffer บน Webview โดยตรง
-        # สั่งดักจับเฉพาะ M3U8/HLS ของหนังจริง และบล็อกไฟล์ MP4 โฆษณา UFABET/WE356 ทั้งหมด
+
+        try:
+            # 1. โหลด HTML ของตอนเพื่อค้นหา iframe ตัวเล่นจริง
+            html = self.get(url)
+            
+            # ดึง iframe ทั้งหมดในหน้า
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            
+            for iframe_url in iframes:
+                iframe_url = self.fix(iframe_url)
+                
+                # กรอง iframe โฆษณา UFABET / Banner ทิ้งทันที
+                if any(x in iframe_url.lower() for x in ["ufa", "banner", "ads", "popup"]):
+                    continue
+
+                # --- 2. ถ้าเจอ OK.ru ให้แก้เข้า API ตรง ---
+                ok_match = re.search(r'ok\.ru/(?:videoembed|video)/(\d+)', iframe_url)
+                if ok_match:
+                    video_id = ok_match.group(1)
+                    direct_url = self.parse_ok_ru(video_id)
+                    if direct_url:
+                        return {
+                            "parse": 0,
+                            "playUrl": "",
+                            "url": direct_url,
+                            "header": {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                                "Referer": "https://ok.ru/"
+                            }
+                        }
+
+                # --- 3. ถ้าเจอ Nanoplayer / SV3 ---
+                if any(x in iframe_url for x in ["nanoplayer", "player.php", "sv3.php"]):
+                    # ดึง HTML ในตัว nanoplayer เพื่อหาไฟล์ hls2.php / m3u8 จริง
+                    nano_html = self.get(iframe_url)
+                    m3u8_match = re.search(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', nano_html) or \
+                                re.search(r'["\'](https?://[^"\']+/hls2\.php[^"\']*)["\']', nano_html)
+                    
+                    if m3u8_match:
+                        return {
+                            "parse": 0,
+                            "playUrl": "",
+                            "url": m3u8_match.group(1),
+                            "header": {
+                                "User-Agent": self.headers["User-Agent"],
+                                "Referer": iframe_url
+                            }
+                        }
+                    
+                    # ถ้าแกะสาย Nanoplayer ตรงไม่ได้ ค่อยส่ง iframe nanoplayer ให้ส่งเล่นแบบ Parse
+                    return {
+                        "parse": 1,
+                        "playUrl": "",
+                        "url": iframe_url,
+                        "header": {"User-Agent": self.headers["User-Agent"], "Referer": url}
+                    }
+
+        except Exception:
+            pass
+
+        # Fallback กรณีไม่เจอ iframe ใดๆ
         return {
             "parse": 1,
             "playUrl": "",
             "url": url,
-            "header": {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-                "Referer": self.host + "/"
-            },
-            # กรองจับเฉพาะลิงก์ hls/m3u8 หรือ ok.ru และไม่เอาไฟล์ mp4 โฆษณา
-            "rule": ".*?(?:hls2\.php|m3u8|ok\.ru/videoembed|(?<!ufa|we356|me356|supreme|banner)\.mp4).*"
+            "header": self.headers
         }
 
     def localProxy(self, param):

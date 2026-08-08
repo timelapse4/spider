@@ -62,18 +62,33 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        # ดึงรายชื่อตอน
+        # ดึงรายชื่อตอน (ปรับปรุงระบบกรองป้องกันเลข EP ซ้ำ และวันที่หลุด)
         ep_links = []
         seen_ep = set()
-        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        
+        # กรองเฉพาะแท็ก <a> หรือ <button>
+        pattern = r'<(?:a|button)[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</(?:a|button)>'
         for link, text in re.findall(pattern, html, re.I | re.S):
             clean_text = self.clean(text)
-            ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)?\s*(\d+)', clean_text, re.I)
+            
+            # ข้ามข้อความที่เป็นวันที่ (เช่น 03-08-2026)
+            if re.search(r'\d{2}-\d{2}-\d{4}', clean_text):
+                continue
+
+            # ค้นหาเลขตอนจากข้อความ
+            ep_match = re.search(r'(?:EP\.?|ตอนที่)\s*(\d+)', clean_text, re.I)
+            if not ep_match:
+                # ถ้าไม่เจอในข้อความ ให้ลองดึงจากโครงสร้าง URL (เช่น ep-1, ep1)
+                ep_match = re.search(r'ep-?(\d+)', link, re.I)
+
             if ep_match:
-                ep_num = str(int(ep_match.group(1)))
-                if ep_num not in seen_ep and len(ep_num) <= 3 and not any(x in link for x in ["/category/", "/country/", "/page/", "/tag/"]):
+                ep_num = int(ep_match.group(1))
+                full_link = self.fix(link)
+                
+                # ตรวจสอบลิงก์ขยะและตอนที่ซ้ำ
+                if ep_num not in seen_ep and not any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/"]):
                     seen_ep.add(ep_num)
-                    ep_links.append((int(ep_num), self.fix(link)))
+                    ep_links.append((ep_num, full_link))
 
         ep_links.sort(key=lambda x: x[0])
         if not ep_links:
@@ -86,7 +101,6 @@ class Spider(Spider):
         for server_idx in range(1, 5):
             ep_list = []
             for ep_num, ep_url in ep_links:
-                # ส่งข้อมูลแบบ url#server_index ให้ playerContent นำไปประมวลผลต่อ
                 ep_list.append(f"ตอนที่ {ep_num}${ep_url}#srv{server_idx}")
             play_urls.append("#".join(ep_list))
 
@@ -146,7 +160,6 @@ class Spider(Spider):
         return ""
 
     def playerContent(self, flag, id, vipFlags):
-        # แยก URL และ Server Index
         srv_idx = 1
         url = id
         if "#srv" in id:
@@ -157,13 +170,9 @@ class Spider(Spider):
         try:
             html = self.get(url)
             
-            # ค้นหาปุ่มสำรอง/เซิร์ฟเวอร์ย่อยใน DOM HTML (data-id, data-post, data-server หรือ data-link)
             btn_matches = re.findall(r'<[^>]+class=["\'][^"\']*(?:btn-server|server|player-option)[^"\']*["\'][^>]*>', html, re.I)
             
-            # 1. ลองแกะลิงก์ตรงตามลำดับเซิร์ฟเวอร์ที่เลือก (สำรอง 1-4)
             server_urls = []
-            
-            # ลองหา attributes ที่ซ่อน URL ไว้ในปุ่ม
             for attr in ["data-link", "data-src", "data-url", "value"]:
                 found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
                 for f in found:
@@ -171,14 +180,12 @@ class Spider(Spider):
                     if not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup"]) and f_fix not in server_urls:
                         server_urls.append(f_fix)
 
-            # หากพบ URL ตามลำดับสำรอง
             selected_url = ""
             if len(server_urls) >= srv_idx:
                 selected_url = server_urls[srv_idx - 1]
             elif len(server_urls) > 0:
                 selected_url = server_urls[0]
 
-            # 2. ถ้าเจอ iframe จากตัวเลือก
             if not selected_url:
                 iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
                 valid_iframes = []
@@ -195,7 +202,6 @@ class Spider(Spider):
             if not selected_url:
                 selected_url = url
 
-            # 3. จัดการเล่นกรณีเป็น OK.ru
             if "ok.ru" in selected_url:
                 direct_ok = self.parse_ok_ru(selected_url)
                 if direct_ok:
@@ -212,7 +218,6 @@ class Spider(Spider):
                     "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
                 }
 
-            # 4. จัดการเล่นกรณีเป็น Nanoplayer หรือ M3U8
             if self.isVideoFormat(selected_url):
                 return {
                     "parse": 0,
@@ -221,7 +226,6 @@ class Spider(Spider):
                     "header": self.headers
                 }
 
-            # ถ้าเป็น iframe เครื่องเล่นอื่นๆ ส่งให้แอป Parse บน iframe ตรง
             return {
                 "parse": 1,
                 "playUrl": "",

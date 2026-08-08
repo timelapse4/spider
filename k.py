@@ -62,33 +62,44 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        # ดึงรายชื่อตอน (ปรับปรุงระบบกรองป้องกันเลข EP ซ้ำ และวันที่หลุด)
         ep_links = []
         seen_ep = set()
         
-        # กรองเฉพาะแท็ก <a> หรือ <button>
-        pattern = r'<(?:a|button)[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</(?:a|button)>'
-        for link, text in re.findall(pattern, html, re.I | re.S):
+        # ค้นหาโซนที่มีรายการตอนโดยเฉพาะ เพื่อไม่ให้ไปกวาดโดนวันที่หรือปุ่มอื่น
+        ep_block = self.match(html, r'(?:class=["\'](?:ep|episode|list-ep|episodes)[^"\']*["\'][^>]*>)(.*?)(?:</div|</section|ซีรีส์แนะนำ)')
+        if not ep_block:
+            ep_block = html
+
+        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        for link, text in re.findall(pattern, ep_block, re.I | re.S):
             clean_text = self.clean(text)
             
-            # ข้ามข้อความที่เป็นวันที่ (เช่น 03-08-2026)
-            if re.search(r'\d{2}-\d{2}-\d{4}', clean_text):
+            # ข้ามลิงก์ที่เป็นวันที่ (เช่น 03-08-2026 หรือ 04-08-2026)
+            if re.search(r'\d{2}[-/\.]\d{2}[-/\.]\d{4}', clean_text):
                 continue
 
-            # ค้นหาเลขตอนจากข้อความ
-            ep_match = re.search(r'(?:EP\.?|ตอนที่)\s*(\d+)', clean_text, re.I)
-            if not ep_match:
-                # ถ้าไม่เจอในข้อความ ให้ลองดึงจากโครงสร้าง URL (เช่น ep-1, ep1)
-                ep_match = re.search(r'ep-?(\d+)', link, re.I)
+            # ข้ามลิงก์หมวดหมู่หรือระบบของเว็บ
+            full_link = self.fix(link)
+            if any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/", "/search"]):
+                continue
 
-            if ep_match:
-                ep_num = int(ep_match.group(1))
-                full_link = self.fix(link)
-                
-                # ตรวจสอบลิงก์ขยะและตอนที่ซ้ำ
-                if ep_num not in seen_ep and not any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/"]):
-                    seen_ep.add(ep_num)
-                    ep_links.append((ep_num, full_link))
+            # หาเลขตอนจากข้อความ หรือจาก URL (เช่น ep-1, ep1)
+            ep_num = None
+            ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)\s*(\d+)', clean_text, re.I)
+            
+            if ep_match and ep_match.group(1):
+                num_val = int(ep_match.group(1))
+                if num_val < 300: # ป้องกันเลขปีหรือ ID
+                    ep_num = num_val
+            
+            if ep_num is None:
+                url_match = re.search(r'ep(?:isode)?[-_]?(\d+)', full_link, re.I)
+                if url_match:
+                    ep_num = int(url_match.group(1))
+
+            if ep_num is not None and ep_num not in seen_ep:
+                seen_ep.add(ep_num)
+                ep_links.append((ep_num, full_link))
 
         ep_links.sort(key=lambda x: x[0])
         if not ep_links:

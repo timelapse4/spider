@@ -2,7 +2,6 @@
 import sys
 import re
 import requests
-import json
 from urllib.parse import quote, unquote
 sys.path.append('..')
 from base.spider import Spider
@@ -11,16 +10,16 @@ class Spider(Spider):
     def init(self, extend=""):
         self.host = "https://hubserieshd.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
             "Referer": self.host + "/",
-            "X-Requested-With": "XMLHttpRequest"
+            "Origin": self.host
         }
 
     def getName(self):
         return "HubSeriesHD"
 
     def isVideoFormat(self, url):
-        return bool(re.search(r'\.(m3u8|mp4|flv|avi|mkv|mov|ts)(\?|$)|/get_file/|/hls/', url or "", re.I))
+        return bool(re.search(r'\.(m3u8|mp4|flv|avi|mkv|mov|ts)(\?|$)|/get_file/', url or "", re.I))
 
     def manualVideoCheck(self):
         return False
@@ -62,58 +61,27 @@ class Spider(Spider):
         desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
         remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
         
-        ep_links = []
+        episodes = []
         seen_ep = set()
         
-        pattern = r'<(?:button|div|a|li)[^>]+(?:href|data-link|data-src|data-url|value)=["\']([^"\']+)["\'][^>]*>(.*?)</(?:button|div|a|li)>'
-        raw_matches = re.findall(pattern, html, re.I | re.S)
-        
-        if not raw_matches:
-            pattern_single = r'<(?:button|div|a|li)[^>]+(?:href|data-link|data-src|data-url|value)=["\']([^"\']+)["\'][^>]*>(.*?)'
-            raw_matches = re.findall(pattern_single, html, re.I | re.S)
-
-        for link, text in raw_matches:
+        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
+        ep_links = []
+        for link, text in re.findall(pattern, html, re.I | re.S):
             clean_text = self.clean(text)
-            full_link = self.fix(link)
-
-            if any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/", "/search", "facebook", "twitter", "#"]):
-                continue
-            if re.search(r'\d{2}[-/\.]\d{2}[-/\.]\d{4}', clean_text):
-                continue
-
-            ep_num = None
-
-            text_match = re.search(r'(?:EP\.?|ตอนที่)\s*(\d+)', clean_text, re.I)
-            if text_match:
-                ep_num = int(text_match.group(1))
-
-            if ep_num is None:
-                url_match = re.search(r'/(?:ep|episode)[-_]?(\d+)(?:/|\.html|$|\?)', full_link, re.I)
-                if url_match:
-                    ep_num = int(url_match.group(1))
-
-            if ep_num is None:
-                pure_num_match = re.search(r'^\s*(\d{1,3})\s*$', clean_text)
-                if pure_num_match:
-                    ep_num = int(pure_num_match.group(1))
-
-            if ep_num is not None and ep_num > 0 and ep_num not in seen_ep:
-                seen_ep.add(ep_num)
-                ep_links.append((ep_num, full_link))
+            ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)?\s*(\d+)', clean_text, re.I)
+            if ep_match:
+                ep_num = str(int(ep_match.group(1)))
+                if ep_num not in seen_ep and len(ep_num) <= 3 and not any(x in link for x in ["/category/", "/country/", "/page/", "/tag/"]):
+                    seen_ep.add(ep_num)
+                    ep_links.append((int(ep_num), self.fix(link)))
 
         ep_links.sort(key=lambda x: x[0])
 
-        if not ep_links:
-            ep_links = [(1, vid)]
+        for ep_num, ep_url in ep_links:
+            episodes.append(f"ตอนที่ {ep_num}${ep_url}")
 
-        play_flags = ["สำรอง 1", "สำรอง 2", "สำรอง 3", "สำรอง 4"]
-        play_urls = []
-
-        for server_idx in range(1, 5):
-            ep_list = []
-            for ep_num, ep_url in ep_links:
-                ep_list.append(f"ตอนที่ {ep_num}${ep_url}#srv{server_idx}")
-            play_urls.append("#".join(ep_list))
+        if not episodes:
+            episodes.append(f"เล่นMain${vid}")
 
         return {
             "list": [{
@@ -128,8 +96,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": "$$$".join(play_flags),
-                "vod_play_url": "$$$".join(play_urls)
+                "vod_play_from": "HubSeriesHD",
+                "vod_play_url": "#".join(episodes)
             }]
         }
 
@@ -139,115 +107,21 @@ class Spider(Spider):
         html = self.get(url)
         return {"list": self.parseList(html), "page": int(pg)}
 
-    def parse_ok_ru(self, embed_url):
-        try:
-            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
-            if not video_id:
-                return ""
-            vid = video_id.group(1)
-            
-            api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={vid}"
-            headers = {
-                "User-Agent": self.headers["User-Agent"],
-                "X-Requested-With": "XMLHttpRequest"
-            }
-            res = requests.post(api_url, headers=headers, timeout=8, verify=False)
-            data = res.json()
-            
-            if "hlsManifestUrl" in data:
-                return data["hlsManifestUrl"]
-            
-            if "videos" in data:
-                videos = data["videos"]
-                for quality in ["full", "hd", "sd", "low"]:
-                    for v in videos:
-                        if v.get("name") == quality and "url" in v:
-                            return v["url"]
-                if len(videos) > 0 and "url" in videos[-1]:
-                    return videos[-1]["url"]
-        except Exception:
-            pass
-        return ""
-
     def playerContent(self, flag, id, vipFlags):
-        srv_idx = 1
         url = id
-        if "#srv" in id:
-            parts = id.split("#srv")
-            url = parts[0]
-            srv_idx = int(parts[1])
-
-        try:
-            headers = {
-                "User-Agent": self.headers["User-Agent"],
-                "Referer": self.host + "/"
-            }
-            res = requests.get(url, headers=headers, timeout=10, verify=False)
-            html = res.text
-            
-            # ดึง Iframe หรือ Embed Link ออกมาจากหน้าเว็บ
-            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-            target_embed = ""
-            if iframes:
-                target_embed = self.fix(iframes[srv_idx - 1] if len(iframes) >= srv_idx else iframes[0])
-
-            # 1. กรณี OK.ru (ดึง M3U8 Direct)
-            if "ok.ru" in target_embed or "vkuser.net" in target_embed:
-                direct_url = self.parse_ok_ru(target_embed)
-                if direct_url:
-                    return {
-                        "parse": 0,
-                        "playUrl": "",
-                        "url": direct_url,
-                        "header": {
-                            "User-Agent": self.headers["User-Agent"],
-                            "Referer": "https://ok.ru/"
-                        }
-                    }
-
-            # 2. กรณี Nanoplayer / Embed อื่นๆ (แกะสกัดไฟล์ .m3u8 มาให้แอปเล่นโดยตรง)
-            if target_embed:
-                try:
-                    embed_res = requests.get(
-                        target_embed, 
-                        headers={"User-Agent": self.headers["User-Agent"], "Referer": url}, 
-                        timeout=10, 
-                        verify=False
-                    )
-                    m3u8_find = re.findall(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', embed_res.text, re.I)
-                    if m3u8_find:
-                        return {
-                            "parse": 0,
-                            "playUrl": "",
-                            "url": m3u8_find[0],
-                            "header": {
-                                "User-Agent": self.headers["User-Agent"],
-                                "Referer": target_embed,
-                                "Origin": "https://main.nanoplayer.zip"
-                            }
-                        }
-                except Exception:
-                    pass
-
-            # 3. กรณีส่ง URL Embed กลับไปให้แอปเปิด
-            return {
-                "parse": 1,
-                "playUrl": "",
-                "url": target_embed or url,
-                "header": {
-                    "User-Agent": self.headers["User-Agent"],
-                    "Referer": url
-                }
-            }
-
-        except Exception:
-            pass
-
+        
+        # ส่งให้แอปเปิด Sniffer บน Webview โดยตรง
+        # สั่งดักจับเฉพาะ M3U8/HLS ของหนังจริง และบล็อกไฟล์ MP4 โฆษณา UFABET/WE356 ทั้งหมด
         return {
             "parse": 1,
             "playUrl": "",
             "url": url,
-            "header": self.headers
+            "header": {
+                "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+                "Referer": self.host + "/"
+            },
+            # กรองจับเฉพาะลิงก์ hls/m3u8 หรือ ok.ru และไม่เอาไฟล์ mp4 โฆษณา
+            "rule": ".*?(?:hls2\.php|m3u8|ok\.ru/videoembed|(?<!ufa|we356|me356|supreme|banner)\.mp4).*"
         }
 
     def localProxy(self, param):

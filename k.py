@@ -113,13 +113,18 @@ class Spider(Spider):
     def playerContent(self, flag, id, vipFlags):
         # ลบสัญลักษณ์ตัวแยกสำรอง (+) ออกจาก URL
         clean_url = id.lstrip('+')
-        
-        # ดึง HTML ของหน้ารายตอนเพื่อเจาะหา iframe เครื่องเล่นวิดีโอหลัก
-        html = self.get(clean_url)
-        
-        # ค้นหาลิงก์ Iframe วิดีโอจริง
-        iframe_src = self.match(html, r'<iframe[^>]+src=["\']([^"\']+)["\']') or self.match(html, r'data-src=["\']([^"\']+)["\']')
-        target_url = self.fix(iframe_src) if iframe_src else clean_url
+
+        # ถ้า id ที่ได้มาเป็นลิงก์ ok.ru โดยตรงอยู่แล้ว (resolve มาจากขั้นตอนก่อนหน้า)
+        # ให้ไป resolve หา URL วิดีโอจริงจาก ok.ru ต่อ
+        if "ok.ru/videoembed" in clean_url:
+            target_url = self.resolveOkRu(clean_url) or clean_url
+        else:
+            # ดึง HTML ของหน้ารายตอนเพื่อเจาะหา iframe เครื่องเล่นวิดีโอหลัก
+            html = self.get(clean_url)
+            iframe_src = self.match(html, r'<iframe[^>]+src=["\']([^"\']+)["\']') or self.match(html, r'data-src=["\']([^"\']+)["\']')
+            target_url = self.fix(iframe_src) if iframe_src else clean_url
+            if "ok.ru/videoembed" in target_url:
+                target_url = self.resolveOkRu(target_url) or target_url
 
         return {
             "parse": 1,
@@ -130,8 +135,31 @@ class Spider(Spider):
                 "Referer": self.host + "/"
             },
             # ปรับ Rule ดักจับเฉพาะ M3U8/HLS หรือ Embed Player และตัด .mp4 โฆษณาออกทั้งหมด
-            "rule": ".*?(?:hls|m3u8|embed|ok\.ru/videoembed).*"
+            "rule": ".*?(?:hls|m3u8|embed|ok\.ru/videoembed|vkuser\.net).*"
         }
+
+    def resolveOkRu(self, embed_url):
+        """แกะหน้า ok.ru/videoembed/xxxx เอา URL วิดีโอจริงจาก data-options JSON"""
+        try:
+            html = self.get(embed_url)
+            raw = self.match(html, r'data-options=["\']([^"\']+)["\']')
+            if not raw:
+                return ""
+            import html as htmlmod
+            import json
+            decoded = htmlmod.unescape(raw)
+            data = json.loads(decoded)
+            videos = data.get("videos") or data.get("metadata", {}).get("videos") or []
+            if isinstance(videos, str):
+                # บางกรณี metadata ยังเป็น string JSON ซ้อนอยู่อีกชั้น
+                videos = json.loads(videos).get("videos", [])
+            if not videos:
+                return ""
+            # เลือกคุณภาพสูงสุดที่มี (เรียงตาม index ท้ายสุด มักเป็นคุณภาพสูงสุด)
+            best = videos[-1]
+            return best.get("url", "")
+        except Exception:
+            return ""
 
     def localProxy(self, param):
         url = ""

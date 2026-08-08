@@ -20,7 +20,7 @@ class Spider(Spider):
         return "HubSeriesHD"
 
     def isVideoFormat(self, url):
-        return bool(re.search(r'\.(m3u8|mp4|flv|avi|mkv|mov|ts)(\?|$)|/get_file/', url or "", re.I))
+        return bool(re.search(r'\.(m3u8|mp4|flv|avi|mkv|mov|ts)(\?|$)|/get_file/|/hls/', url or "", re.I))
 
     def manualVideoCheck(self):
         return False
@@ -65,11 +65,9 @@ class Spider(Spider):
         ep_links = []
         seen_ep = set()
         
-        # กวาดหาปุ่มเลือกตอนจากทุกแท็ก (button, div, a, li) ที่มีลิงก์ซ่อนอยู่ใน attribute ต่างๆ
         pattern = r'<(?:button|div|a|li)[^>]+(?:href|data-link|data-src|data-url|value)=["\']([^"\']+)["\'][^>]*>(.*?)</(?:button|div|a|li)>'
         raw_matches = re.findall(pattern, html, re.I | re.S)
         
-        # หากไม่เจอแท็กปิด ให้กวาดหาจากแท็กเปิดแบบเดี่ยว
         if not raw_matches:
             pattern_single = r'<(?:button|div|a|li)[^>]+(?:href|data-link|data-src|data-url|value)=["\']([^"\']+)["\'][^>]*>(.*?)'
             raw_matches = re.findall(pattern_single, html, re.I | re.S)
@@ -78,7 +76,6 @@ class Spider(Spider):
             clean_text = self.clean(text)
             full_link = self.fix(link)
 
-            # ข้ามลิงก์ระบบ ลิงก์หมวดหมู่ และข้อความที่เป็นวันที่ (เช่น 03-08-2026)
             if any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/", "/search", "facebook", "twitter", "#"]):
                 continue
             if re.search(r'\d{2}[-/\.]\d{2}[-/\.]\d{4}', clean_text):
@@ -86,36 +83,29 @@ class Spider(Spider):
 
             ep_num = None
 
-            # 1. ค้นหาเลขตอนจากข้อความในปุ่ม (เช่น EP.1, ตอนที่ 1, EP 1)
             text_match = re.search(r'(?:EP\.?|ตอนที่)\s*(\d+)', clean_text, re.I)
             if text_match:
                 ep_num = int(text_match.group(1))
 
-            # 2. ค้นหาเลขตอนจากโครงสร้าง URL (เช่น /ep-1/, /ep1/, /episode-1)
             if ep_num is None:
                 url_match = re.search(r'/(?:ep|episode)[-_]?(\d+)(?:/|\.html|$|\?)', full_link, re.I)
                 if url_match:
                     ep_num = int(url_match.group(1))
 
-            # 3. กรณีเป็นตัวเลขโดดๆ ในข้อความ (เช่น "1", "2") แต่ต้องไม่ใช่เลขปี ค.ศ. หรือ ID
             if ep_num is None:
                 pure_num_match = re.search(r'^\s*(\d{1,3})\s*$', clean_text)
                 if pure_num_match:
                     ep_num = int(pure_num_match.group(1))
 
-            # จัดเก็บตอนที่ไม่ซ้ำ
             if ep_num is not None and ep_num > 0 and ep_num not in seen_ep:
                 seen_ep.add(ep_num)
                 ep_links.append((ep_num, full_link))
 
-        # เรียงลำดับ ตอนที่ 1, 2, 3...
         ep_links.sort(key=lambda x: x[0])
 
-        # กรณีหาตอนไม่เจอ ให้ใช้ลิงก์หน้าหลักเป็นตอนที่ 1
         if not ep_links:
             ep_links = [(1, vid)]
 
-        # สร้างแท็บตัวเล่น 4 สำรอง
         play_flags = ["สำรอง 1", "สำรอง 2", "สำรอง 3", "สำรอง 4"]
         play_urls = []
 
@@ -150,7 +140,6 @@ class Spider(Spider):
         return {"list": self.parseList(html), "page": int(pg)}
 
     def parse_ok_ru(self, embed_url):
-        """เจาะเอา Direct Link จาก OK.ru"""
         try:
             video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
             if not video_id:
@@ -190,39 +179,42 @@ class Spider(Spider):
 
         try:
             html = self.get(url)
-            
-            btn_matches = re.findall(r'<[^>]+class=["\'][^"\']*(?:btn-server|server|player-option)[^"\']*["\'][^>]*>', html, re.I)
-            
-            server_urls = []
-            for attr in ["data-link", "data-src", "data-url", "value"]:
+            candidate_urls = []
+
+            # 1. ค้นหาลิงก์ไฟล์วิดีโอโดยตรง (.m3u8 หรือ .mp4) จากสคริปต์
+            direct_m3u8 = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', html, re.I)
+            for m in direct_m3u8:
+                if not any(x in m.lower() for x in ["ufa", "banner", "ads", "pop"]):
+                    candidate_urls.append(m)
+
+            # 2. ค้นหาลิงก์ Player จาก Attribute ต่างๆ
+            for attr in ["data-link", "data-src", "data-url", "data-player", "value", "src"]:
                 found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
                 for f in found:
                     f_fix = self.fix(f)
-                    if not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup"]) and f_fix not in server_urls:
-                        server_urls.append(f_fix)
+                    if f_fix.startswith("http") and not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup", "facebook"]):
+                        if f_fix not in candidate_urls and f_fix != url:
+                            candidate_urls.append(f_fix)
 
+            # 3. ค้นหา iframe
+            iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+            for iframe in iframes:
+                iframe_fix = self.fix(iframe)
+                if iframe_fix.startswith("http") and not any(x in iframe_fix.lower() for x in ["ufa", "banner", "ads", "popup"]):
+                    if iframe_fix not in candidate_urls:
+                        candidate_urls.append(iframe_fix)
+
+            # เลือก URL ตาม Server Index ที่ส่งมา
             selected_url = ""
-            if len(server_urls) >= srv_idx:
-                selected_url = server_urls[srv_idx - 1]
-            elif len(server_urls) > 0:
-                selected_url = server_urls[0]
-
-            if not selected_url:
-                iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-                valid_iframes = []
-                for iframe in iframes:
-                    iframe_fix = self.fix(iframe)
-                    if not any(x in iframe_fix.lower() for x in ["ufa", "banner", "ads", "popup"]):
-                        valid_iframes.append(iframe_fix)
-                
-                if len(valid_iframes) >= srv_idx:
-                    selected_url = valid_iframes[srv_idx - 1]
-                elif len(valid_iframes) > 0:
-                    selected_url = valid_iframes[0]
+            if len(candidate_urls) >= srv_idx:
+                selected_url = candidate_urls[srv_idx - 1]
+            elif len(candidate_urls) > 0:
+                selected_url = candidate_urls[0]
 
             if not selected_url:
                 selected_url = url
 
+            # กรณีเจอลิงก์ OK.ru
             if "ok.ru" in selected_url:
                 direct_ok = self.parse_ok_ru(selected_url)
                 if direct_ok:
@@ -239,14 +231,19 @@ class Spider(Spider):
                     "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
                 }
 
+            # ถ้าเป็นไฟล์วิดีโอตรงๆ ให้เล่นเลยโดยไม่ผ่าน Webview Parse
             if self.isVideoFormat(selected_url):
                 return {
                     "parse": 0,
                     "playUrl": "",
                     "url": selected_url,
-                    "header": self.headers
+                    "header": {
+                        "User-Agent": self.headers["User-Agent"],
+                        "Referer": self.host + "/"
+                    }
                 }
 
+            # กรณีอื่นๆ ให้แอปใช้ Webview (parse = 1) ในการแกะวิดีโอ
             return {
                 "parse": 1,
                 "playUrl": "",

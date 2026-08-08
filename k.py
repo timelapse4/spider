@@ -186,13 +186,13 @@ class Spider(Spider):
             html = res.text
             candidate_urls = []
 
-            # 1. แกะหาไฟล์ m3u8 / mp4 จากสคริปต์
+            # 1. ดึงลิงก์ไฟล์ m3u8 หรือ mp4 โดยตรงถ้ามีในหน้าเว็บ
             direct_files = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', html, re.I)
             for m in direct_files:
                 if not any(x in m.lower() for x in ["ufa", "banner", "ads", "pop"]):
                     candidate_urls.append(m)
 
-            # 2. แกะหา iframe หรือ player link
+            # 2. ดึง iframe หรือ Player link อื่นๆ
             for attr in ["data-link", "data-src", "data-url", "data-player", "value", "src"]:
                 found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
                 for f in found:
@@ -217,7 +217,21 @@ class Spider(Spider):
             if not selected_url:
                 selected_url = url
 
-            # กรณีเจอลิงก์ OK.ru
+            # กรณี Nanoplayer: กำหนด Referer ให้ตรงกับตัวเล่น Nanoplayer โดยเฉพาะ
+            if "nanoplayer" in selected_url or "nanoplayer" in url:
+                target_url = selected_url if "nanoplayer" in selected_url else url
+                return {
+                    "parse": 1,
+                    "playUrl": "",
+                    "url": target_url,
+                    "header": {
+                        "User-Agent": self.headers["User-Agent"],
+                        "Referer": "https://main.nanoplayer.zip/",
+                        "Origin": "https://main.nanoplayer.zip"
+                    }
+                }
+
+            # กรณี OK.ru
             if "ok.ru" in selected_url or "vkuser.net" in selected_url:
                 direct_ok = self.parse_ok_ru(selected_url)
                 if direct_ok:
@@ -231,7 +245,7 @@ class Spider(Spider):
                         }
                     }
 
-            # ถ้าเป็นไฟล์วิดีโอตรงๆ
+            # กรณีเป็นไฟล์วิดีโอ Direct (.m3u8 / .mp4)
             if self.isVideoFormat(selected_url):
                 return {
                     "parse": 0,
@@ -243,7 +257,7 @@ class Spider(Spider):
                     }
                 }
 
-            # กรณี Nanoplayer หรือ Player ฝังในเว็บ
+            # กรณีทั่วไป
             return {
                 "parse": 1,
                 "playUrl": "",

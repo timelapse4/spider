@@ -83,6 +83,9 @@ class Spider(Spider):
         if not episodes:
             episodes.append(f"เล่นMain${vid}")
 
+        play_str = "#".join(episodes)
+
+        # เพิ่มการแบ่งตัวเลือก Server สำรอง 1-4 ให้ตรงตามหน้าเว็บ
         return {
             "list": [{
                 "vod_id": vid,
@@ -96,8 +99,8 @@ class Spider(Spider):
                 "vod_actor": "",
                 "vod_director": "",
                 "vod_content": desc,
-                "vod_play_from": "HubSeriesHD",
-                "vod_play_url": "#".join(episodes)
+                "vod_play_from": "สำรอง 1$$$สำรอง 2$$$สำรอง 3$$$สำรอง 4",
+                "vod_play_url": f"{play_str}$$$+{play_str}$$$++{play_str}$$$+++{play_str}"
             }]
         }
 
@@ -108,20 +111,26 @@ class Spider(Spider):
         return {"list": self.parseList(html), "page": int(pg)}
 
     def playerContent(self, flag, id, vipFlags):
-        url = id
+        # ลบสัญลักษณ์ตัวแยกสำรอง (+) ออกจาก URL
+        clean_url = id.lstrip('+')
         
-        # ส่งให้แอปเปิด Sniffer บน Webview โดยตรง
-        # สั่งดักจับเฉพาะ M3U8/HLS ของหนังจริง และบล็อกไฟล์ MP4 โฆษณา UFABET/WE356 ทั้งหมด
+        # ดึง HTML ของหน้ารายตอนเพื่อเจาะหา iframe เครื่องเล่นวิดีโอหลัก
+        html = self.get(clean_url)
+        
+        # ค้นหาลิงก์ Iframe วิดีโอจริง
+        iframe_src = self.match(html, r'<iframe[^>]+src=["\']([^"\']+)["\']') or self.match(html, r'data-src=["\']([^"\']+)["\']')
+        target_url = self.fix(iframe_src) if iframe_src else clean_url
+
         return {
             "parse": 1,
             "playUrl": "",
-            "url": url,
+            "url": target_url,
             "header": {
                 "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
                 "Referer": self.host + "/"
             },
-            # กรองจับเฉพาะลิงก์ hls/m3u8 หรือ ok.ru และไม่เอาไฟล์ mp4 โฆษณา
-            "rule": ".*?(?:hls2\.php|m3u8|ok\.ru/videoembed|(?<!ufa|we356|me356|supreme|banner)\.mp4).*"
+            # ปรับ Rule ดักจับเฉพาะ M3U8/HLS หรือ Embed Player และตัด .mp4 โฆษณาออกทั้งหมด
+            "rule": ".*?(?:hls|m3u8|embed|ok\.ru/videoembed).*"
         }
 
     def localProxy(self, param):

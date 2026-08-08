@@ -184,84 +184,56 @@ class Spider(Spider):
             }
             res = requests.get(url, headers=headers, timeout=10, verify=False)
             html = res.text
-            candidate_urls = []
-
-            # 1. ดึงลิงก์ไฟล์ m3u8 หรือ mp4 โดยตรงถ้ามีในหน้าเว็บ
-            direct_files = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', html, re.I)
-            for m in direct_files:
-                if not any(x in m.lower() for x in ["ufa", "banner", "ads", "pop"]):
-                    candidate_urls.append(m)
-
-            # 2. ดึง iframe หรือ Player link อื่นๆ
-            for attr in ["data-link", "data-src", "data-url", "data-player", "value", "src"]:
-                found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
-                for f in found:
-                    f_fix = self.fix(f)
-                    if f_fix.startswith("http") and not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup", "facebook"]):
-                        if f_fix not in candidate_urls and f_fix != url:
-                            candidate_urls.append(f_fix)
-
+            
+            # ดึง Iframe หรือ Embed Link ออกมาจากหน้าเว็บ
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
-            for iframe in iframes:
-                iframe_fix = self.fix(iframe)
-                if iframe_fix.startswith("http") and not any(x in iframe_fix.lower() for x in ["ufa", "banner", "ads", "popup"]):
-                    if iframe_fix not in candidate_urls:
-                        candidate_urls.append(iframe_fix)
+            target_embed = ""
+            if iframes:
+                target_embed = self.fix(iframes[srv_idx - 1] if len(iframes) >= srv_idx else iframes[0])
 
-            selected_url = ""
-            if len(candidate_urls) >= srv_idx:
-                selected_url = candidate_urls[srv_idx - 1]
-            elif len(candidate_urls) > 0:
-                selected_url = candidate_urls[0]
-
-            if not selected_url:
-                selected_url = url
-
-            # กรณี Nanoplayer: กำหนด Referer ให้ตรงกับตัวเล่น Nanoplayer โดยเฉพาะ
-            if "nanoplayer" in selected_url or "nanoplayer" in url:
-                target_url = selected_url if "nanoplayer" in selected_url else url
-                return {
-                    "parse": 1,
-                    "playUrl": "",
-                    "url": target_url,
-                    "header": {
-                        "User-Agent": self.headers["User-Agent"],
-                        "Referer": "https://main.nanoplayer.zip/",
-                        "Origin": "https://main.nanoplayer.zip"
-                    }
-                }
-
-            # กรณี OK.ru
-            if "ok.ru" in selected_url or "vkuser.net" in selected_url:
-                direct_ok = self.parse_ok_ru(selected_url)
-                if direct_ok:
+            # 1. กรณี OK.ru (ดึง M3U8 Direct)
+            if "ok.ru" in target_embed or "vkuser.net" in target_embed:
+                direct_url = self.parse_ok_ru(target_embed)
+                if direct_url:
                     return {
                         "parse": 0,
                         "playUrl": "",
-                        "url": direct_ok,
+                        "url": direct_url,
                         "header": {
                             "User-Agent": self.headers["User-Agent"],
                             "Referer": "https://ok.ru/"
                         }
                     }
 
-            # กรณีเป็นไฟล์วิดีโอ Direct (.m3u8 / .mp4)
-            if self.isVideoFormat(selected_url):
-                return {
-                    "parse": 0,
-                    "playUrl": "",
-                    "url": selected_url,
-                    "header": {
-                        "User-Agent": self.headers["User-Agent"],
-                        "Referer": url
-                    }
-                }
+            # 2. กรณี Nanoplayer / Embed อื่นๆ (แกะสกัดไฟล์ .m3u8 มาให้แอปเล่นโดยตรง)
+            if target_embed:
+                try:
+                    embed_res = requests.get(
+                        target_embed, 
+                        headers={"User-Agent": self.headers["User-Agent"], "Referer": url}, 
+                        timeout=10, 
+                        verify=False
+                    )
+                    m3u8_find = re.findall(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', embed_res.text, re.I)
+                    if m3u8_find:
+                        return {
+                            "parse": 0,
+                            "playUrl": "",
+                            "url": m3u8_find[0],
+                            "header": {
+                                "User-Agent": self.headers["User-Agent"],
+                                "Referer": target_embed,
+                                "Origin": "https://main.nanoplayer.zip"
+                            }
+                        }
+                except Exception:
+                    pass
 
-            # กรณีทั่วไป
+            # 3. กรณีส่ง URL Embed กลับไปให้แอปเปิด
             return {
                 "parse": 1,
                 "playUrl": "",
-                "url": selected_url,
+                "url": target_embed or url,
                 "header": {
                     "User-Agent": self.headers["User-Agent"],
                     "Referer": url

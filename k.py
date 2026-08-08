@@ -57,79 +57,83 @@ class Spider(Spider):
         vid = ids[0]
         html = self.get(vid)
         
-        name = self.clean(self.match(html, r'<h1[^>]*>(.*?)</h1>') or self.match(html, r'<meta property="og:title" content="(.*?)"'))
-        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+class=["\']package-image["\'][^>]*src=["\']([^"\']+)["\']'))
-        desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))
-        remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))
+        name = self.clean(self.match(html, r'<h1[^>]*>(.*?)</h1>') or self.match(html, r'<meta property="og:title" content="(.*?)"'))[span_2](start_span)[span_2](end_span)
+        pic = self.fix(self.match(html, r'<meta property="og:image" content="(.*?)"') or self.match(html, r'<img[^>]+class=["\']package-image["\'][^>]*src=["\']([^"\']+)["\']'))[span_3](start_span)[span_3](end_span)
+        desc = self.clean(self.match(html, r'<meta property="og:description" content="(.*?)"'))[span_4](start_span)[span_4](end_span)
+        remarks = self.clean(self.match(html, r'<div[^>]+class=["\']ep["\'][^>]*>(.*?)</div>'))[span_5](start_span)[span_5](end_span)
         
         ep_links = []
         seen_ep = set()
         
-        # ค้นหาโซนที่มีรายการตอนโดยเฉพาะ เพื่อไม่ให้ไปกวาดโดนวันที่หรือปุ่มอื่น
-        ep_block = self.match(html, r'(?:class=["\'](?:ep|episode|list-ep|episodes)[^"\']*["\'][^>]*>)(.*?)(?:</div|</section|ซีรีส์แนะนำ)')
-        if not ep_block:
-            ep_block = html
-
-        pattern = r'<[^>]+(?:href|data-link|data-src|data-url)=["\']([^"\']+)["\'][^>]*>(.*?)</[^>]+>'
-        for link, text in re.findall(pattern, ep_block, re.I | re.S):
+        # ค้นหาปุ่มลิงก์ทั้งหมดในหน้า
+        pattern = r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
+        matches = re.findall(pattern, html, re.I | re.S)
+        
+        for link, text in matches:
+            full_link = self.fix(link)
             clean_text = self.clean(text)
             
-            # ข้ามลิงก์ที่เป็นวันที่ (เช่น 03-08-2026 หรือ 04-08-2026)
+            # กรองลิงก์ระบบ / หมวดหมู่ / ลิงก์ภายนอก
+            if any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/", "/search", "facebook", "twitter", "#"]):
+                continue
+
+            # ข้ามลิงก์ที่เป็นรูปแบบวันที่ (เช่น 03-08-2026)[span_6](start_span)[span_6](end_span)
             if re.search(r'\d{2}[-/\.]\d{2}[-/\.]\d{4}', clean_text):
                 continue
 
-            # ข้ามลิงก์หมวดหมู่หรือระบบของเว็บ
-            full_link = self.fix(link)
-            if any(x in full_link for x in ["/category/", "/country/", "/page/", "/tag/", "/search"]):
-                continue
-
-            # หาเลขตอนจากข้อความ หรือจาก URL (เช่น ep-1, ep1)
             ep_num = None
-            ep_match = re.search(r'(?:EP\.?|ตอนที่|\b)\s*(\d+)', clean_text, re.I)
-            
-            if ep_match and ep_match.group(1):
-                num_val = int(ep_match.group(1))
-                if num_val < 300: # ป้องกันเลขปีหรือ ID
-                    ep_num = num_val
-            
-            if ep_num is None:
-                url_match = re.search(r'ep(?:isode)?[-_]?(\d+)', full_link, re.I)
-                if url_match:
-                    ep_num = int(url_match.group(1))
 
+            # 1. พยายามหาเลข EP จาก URL ก่อน (แม่นยำที่สุด เช่น /ep-1/, /ep1/, /episode-2/)
+            url_match = re.search(r'/(?:ep|episode)[-_]?(\d+)(?:/|\.html|$|\?)', full_link, re.I)
+            if url_match:
+                ep_num = int(url_match.group(1))
+
+            # 2. ถ้าใน URL ไม่มี ให้หาจากข้อความในปุ่ม (เช่น EP.1, ตอนที่ 1, หรือตัวเลขโดดๆ 1)
+            if ep_num is None:
+                text_match = re.search(r'(?:EP\.?|ตอนที่|\b)\s*(\d+)\b', clean_text, re.I)[span_7](start_span)[span_7](end_span)
+                if text_match:
+                    val = int(text_match.group(1))
+                    # ป้องกันการดึงเลขปี ค.ศ. หรือ ID หน้าเว็บที่มากกว่า 300[span_8](start_span)[span_8](end_span)
+                    if val < 300:
+                        ep_num = val
+
+            # เก็บเฉพาะตอนที่ไม่ซ้ำ
             if ep_num is not None and ep_num not in seen_ep:
                 seen_ep.add(ep_num)
                 ep_links.append((ep_num, full_link))
 
+        # เรียงลำดับ ตอนที่ 1, 2, 3... ให้ถูกต้อง
         ep_links.sort(key=lambda x: x[0])
+        
+        # ถ้าหาไม่เจอเลย ให้ใช้หน้าปัจจุบันเป็น ตอนที่ 1
         if not ep_links:
-            ep_links = [(1, vid)]
+            ep_links = [(1, vid)][span_9](start_span)[span_9](end_span)
 
-        # สร้างแท็บตัวเล่น 4 สำรอง
-        play_flags = ["สำรอง 1", "สำรอง 2", "สำรอง 3", "สำรอง 4"]
-        play_urls = []
+        # สร้างระบบเล่น 4 Server สำรอง[span_10](start_span)[span_10](end_span)
+        play_flags = ["สำรอง 1", "สำรอง 2", "สำรอง 3", "สำรอง 4"][span_11](start_span)[span_11](end_span)
+        play_urls = [][span_12](start_span)[span_12](end_span)
 
-        for server_idx in range(1, 5):
-            ep_list = []
-            for ep_num, ep_url in ep_links:
-                ep_list.append(f"ตอนที่ {ep_num}${ep_url}#srv{server_idx}")
-            play_urls.append("#".join(ep_list))
+        for server_idx in range(1, 5):[span_13](start_span)[span_13](end_span)
+            ep_list = [][span_14](start_span)[span_14](end_span)
+            for ep_num, ep_url in ep_links:[span_15](start_span)[span_15](end_span)
+                ep_list.append(f"ตอนที่ {ep_num}${ep_url}#srv{server_idx}")[span_16](start_span)[span_16](end_span)
+            play_urls.append("#".join(ep_list))[span_17](start_span)[span_17](end_span)
 
         return {
             "list": [{
                 "vod_id": vid,
                 "vod_name": name,
-                "vod_pic": self.img(pic),
-                "vod_remarks": remarks,
+                "vod_pic": self.img(pic),[span_18](start_span)[span_18](end_span)
+                "vod_remarks": remarks,[span_19](start_span)[span_19](end_span)
                 "type_name": "",
                 "vod_year": "",
-                "vod_area": "Korea",
+                "vod_area": "Korea",[span_20](start_span)[span_20](end_span)
                 "vod_lang": "",
                 "vod_actor": "",
                 "vod_director": "",
-                "vod_content": desc,
-                "vod_play_from": "$$$".join(play_flags),
-                "vod_play_url": "$$$".join(play_urls)
+                "vod_content": desc,[span_21](start_span)[span_21](end_span)
+                "vod_play_from": "$$$".join(play_flags),[span_22](start_span)[span_22](end_span)
+                "vod_play_url": "$$$".join(play_urls)[span_23](start_span)[span_23](end_span)
             }]
         }
 
@@ -142,7 +146,7 @@ class Spider(Spider):
     def parse_ok_ru(self, embed_url):
         """เจาะเอา Direct Link จาก OK.ru"""
         try:
-            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)
+            video_id = re.search(r'videoembed/(\d+)', embed_url) or re.search(r'video/(\d+)', embed_url)[span_24](start_span)[span_24](end_span)
             if not video_id:
                 return ""
             vid = video_id.group(1)
@@ -181,11 +185,11 @@ class Spider(Spider):
         try:
             html = self.get(url)
             
-            btn_matches = re.findall(r'<[^>]+class=["\'][^"\']*(?:btn-server|server|player-option)[^"\']*["\'][^>]*>', html, re.I)
+            btn_matches = re.findall(r'<[^>]+class=["\'][^"\']*(?:btn-server|server|player-option)[^"\']*["\'][^>]*>', html, re.I)[span_25](start_span)[span_25](end_span)
             
             server_urls = []
             for attr in ["data-link", "data-src", "data-url", "value"]:
-                found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
+                found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)[span_26](start_span)[span_26](end_span)
                 for f in found:
                     f_fix = self.fix(f)
                     if not any(x in f_fix.lower() for x in ["ufa", "banner", "ads", "popup"]) and f_fix not in server_urls:
@@ -198,7 +202,7 @@ class Spider(Spider):
                 selected_url = server_urls[0]
 
             if not selected_url:
-                iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+                iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)[span_27](start_span)[span_27](end_span)
                 valid_iframes = []
                 for iframe in iframes:
                     iframe_fix = self.fix(iframe)
@@ -324,19 +328,19 @@ class Spider(Spider):
         if not html:
             return res
         
-        cards = re.findall(r'<a\s+class=["\']card["\']\s+href=["\']([^"\']+)["\']>(.*?)</a>', html, re.S | re.I)
+        cards = re.findall(r'<a\s+class=["\']card["\']\s+href=["\']([^"\']+)["\']>(.*?)</a>', html, re.S | re.I)[span_28](start_span)[span_28](end_span)
         if cards:
             for href, block in cards:
                 url = self.fix(href)
-                img_m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.I)
+                img_m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.I)[span_29](start_span)[span_29](end_span)
                 pic = img_m.group(1) if img_m else ""
                 
-                title_m = re.search(r'<div\s+class=["\']title["\']\s*>(.*?)</div>', block, re.S | re.I)
+                title_m = re.search(r'<div\s+class=["\']title["\']\s*>(.*?)</div>', block, re.S | re.I)[span_30](start_span)[span_30](end_span)
                 if not title_m:
-                    title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)
+                    title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)[span_31](start_span)[span_31](end_span)
                 title = self.clean(title_m.group(1)) if title_m else ""
                 
-                ep_m = re.search(r'<div\s+class=["\']ep["\']\s*>(.*?)</div>', block, re.S | re.I)
+                ep_m = re.search(r'<div\s+class=["\']ep["\']\s*>(.*?)</div>', block, re.S | re.I)[span_32](start_span)[span_32](end_span)
                 remarks = self.clean(ep_m.group(1)) if ep_m else ""
                 
                 if url and title:
@@ -349,22 +353,22 @@ class Spider(Spider):
             return res
 
         seen = set()
-        for m in re.finditer(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S | re.I):
-            href, block = m.group(1), m.group(2)
+        for m in re.finditer(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S | re.I):[span_33](start_span)[span_33](end_span)
+            href, block = m.group(1), m.group(2)[span_34](start_span)[span_34](end_span)
             url = self.fix(href)
             
-            if url in seen or any(x in url for x in ["/category/", "/country/", "/page/", "/tag/", "#", "mailto:", "tel:"]):
+            if url in seen or any(x in url for x in ["/category/", "/country/", "/page/", "/tag/", "#", "mailto:", "tel:"]):[span_35](start_span)[span_35](end_span)
                 continue
                 
-            img_m = re.search(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', block, re.I)
+            img_m = re.search(r'<img[^>]+(?:src|data-src)=["\']([^"\']+)["\']', block, re.I)[span_36](start_span)[span_36](end_span)
             if not img_m:
                 continue
             pic = img_m.group(1)
             
-            title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)
-            title = self.clean(title_m.group(1)) if title_m else self.clean(block)
+            title_m = re.search(r'alt=["\']([^"\']+)["\']', block, re.I)[span_37](start_span)[span_37](end_span)
+            title = self.clean(title_m.group(1)) if title_m else self.clean(block)[span_38](start_span)[span_38](end_span)
             
-            if title and len(title) > 1 and "logo" not in pic:
+            if title and len(title) > 1 and "logo" not in pic:[span_39](start_span)[span_39](end_span)
                 seen.add(url)
                 res.append({
                     "vod_id": url,

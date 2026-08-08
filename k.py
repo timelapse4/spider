@@ -148,7 +148,7 @@ class Spider(Spider):
             
             api_url = f"https://ok.ru/dk?cmd=videoPlayerMetadata&vId={vid}"
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "User-Agent": self.headers["User-Agent"],
                 "X-Requested-With": "XMLHttpRequest"
             }
             res = requests.post(api_url, headers=headers, timeout=8, verify=False)
@@ -178,16 +178,21 @@ class Spider(Spider):
             srv_idx = int(parts[1])
 
         try:
-            html = self.get(url)
+            headers = {
+                "User-Agent": self.headers["User-Agent"],
+                "Referer": self.host + "/"
+            }
+            res = requests.get(url, headers=headers, timeout=10, verify=False)
+            html = res.text
             candidate_urls = []
 
-            # 1. ค้นหาลิงก์ไฟล์วิดีโอโดยตรง (.m3u8 หรือ .mp4) จากสคริปต์
-            direct_m3u8 = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', html, re.I)
-            for m in direct_m3u8:
+            # 1. แกะหาไฟล์ m3u8 / mp4 จากสคริปต์
+            direct_files = re.findall(r'["\'](https?://[^"\']+\.(?:m3u8|mp4)[^"\']*)["\']', html, re.I)
+            for m in direct_files:
                 if not any(x in m.lower() for x in ["ufa", "banner", "ads", "pop"]):
                     candidate_urls.append(m)
 
-            # 2. ค้นหาลิงก์ Player จาก Attribute ต่างๆ
+            # 2. แกะหา iframe หรือ player link
             for attr in ["data-link", "data-src", "data-url", "data-player", "value", "src"]:
                 found = re.findall(rf'{attr}=["\']([^"\']+)["\']', html, re.I)
                 for f in found:
@@ -196,7 +201,6 @@ class Spider(Spider):
                         if f_fix not in candidate_urls and f_fix != url:
                             candidate_urls.append(f_fix)
 
-            # 3. ค้นหา iframe
             iframes = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
             for iframe in iframes:
                 iframe_fix = self.fix(iframe)
@@ -204,7 +208,6 @@ class Spider(Spider):
                     if iframe_fix not in candidate_urls:
                         candidate_urls.append(iframe_fix)
 
-            # เลือก URL ตาม Server Index ที่ส่งมา
             selected_url = ""
             if len(candidate_urls) >= srv_idx:
                 selected_url = candidate_urls[srv_idx - 1]
@@ -215,23 +218,20 @@ class Spider(Spider):
                 selected_url = url
 
             # กรณีเจอลิงก์ OK.ru
-            if "ok.ru" in selected_url:
+            if "ok.ru" in selected_url or "vkuser.net" in selected_url:
                 direct_ok = self.parse_ok_ru(selected_url)
                 if direct_ok:
                     return {
                         "parse": 0,
                         "playUrl": "",
                         "url": direct_ok,
-                        "header": {"User-Agent": "Mozilla/5.0", "Referer": "https://ok.ru/"}
+                        "header": {
+                            "User-Agent": self.headers["User-Agent"],
+                            "Referer": "https://ok.ru/"
+                        }
                     }
-                return {
-                    "parse": 1,
-                    "playUrl": "",
-                    "url": selected_url,
-                    "header": {"User-Agent": self.headers["User-Agent"], "Referer": "https://ok.ru/"}
-                }
 
-            # ถ้าเป็นไฟล์วิดีโอตรงๆ ให้เล่นเลยโดยไม่ผ่าน Webview Parse
+            # ถ้าเป็นไฟล์วิดีโอตรงๆ
             if self.isVideoFormat(selected_url):
                 return {
                     "parse": 0,
@@ -239,11 +239,11 @@ class Spider(Spider):
                     "url": selected_url,
                     "header": {
                         "User-Agent": self.headers["User-Agent"],
-                        "Referer": self.host + "/"
+                        "Referer": url
                     }
                 }
 
-            # กรณีอื่นๆ ให้แอปใช้ Webview (parse = 1) ในการแกะวิดีโอ
+            # กรณี Nanoplayer หรือ Player ฝังในเว็บ
             return {
                 "parse": 1,
                 "playUrl": "",

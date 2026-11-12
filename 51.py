@@ -5,8 +5,19 @@ except Exception:
     _requests = None
 
 
-class Spider:
+try:
+    from base.spider import Spider as BaseSpider
+except Exception:
+    class BaseSpider(object):
+        pass
+
+
+class Spider(BaseSpider):
     def __init__(self):
+        try:
+            super().__init__()
+        except Exception:
+            pass
         self.site = "https://dandanzan.net"
         self.name = "蛋蛋赞影院"
         self.header = {

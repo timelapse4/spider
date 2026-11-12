@@ -2,62 +2,37 @@
 # TG交流群 https://t.me/hshsjk9
 
 import re, json, time, random
-from urllib.parse import quote
 try:
     import requests as _requests
 except Exception:
     _requests = None
-try:
-    from Crypto.Cipher import AES as _AES
-    from Crypto.Util.Padding import unpad as _unpad
-except Exception:
-    _AES = None
-    _unpad = None
 
 
 class Spider:
     def __init__(self):
-        self.site = "https://attack.fjsxfbcm.cc"
-        self.name = "51吃瓜"
+        self.site = "https://78vc9ew4.niu16.top"
+        self.name = "腾迅影视"
         self.header = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "Referer": self.site,
+            "Referer": self.site + "/",
             "Accept-Language": "zh-CN,zh;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
         }
         self.s = self.session = self.sess = _requests.Session() if _requests else None
         self._extend = {}
+        self._home = None
         self._verified = False
+        self._cj = None
         self._opener = None
-        self._img_key = b"f5d965df75336270"
-        self._img_iv = b"97b60394abc2fbe1"
-        self.cats = [
-            ("mrds", "每日大赛"),
-            ("whhj", "网黄合集"),
-            ("mrdg", "吃瓜榜单"),
-            ("qghj", "瓜友点播"),
-            ("rdsj", "热门大瓜"),
-            ("bkdg", "必看大瓜"),
-            ("ysyl", "成人视频"),
-            ("lldd", "伦理道德"),
-            ("gcjq", "国产视频"),
-            ("thjx", "探花精选"),
-            ("xsxy", "学生校园"),
-            ("whhl", "网红黑料"),
-            ("snsn", "骚男骚女"),
-            ("whmx", "明星爆料"),
-            ("hwcg", "海外吃瓜"),
-            ("rrcg", "人人吃瓜"),
-            ("ldcg", "领导干部"),
-            ("jpll", "软萌甜妹"),
-            ("sjb", "竞技吃瓜"),
-            ("qubk", "吃瓜看戏"),
-            ("dcbq", "擦边撩骚"),
-            ("zzs", "性爱技巧"),
-            ("cgxw", "吃瓜新闻"),
-            ("yczq", "原创博主"),
-            ("51djc", "51剧场"),
-            ("51hd", "往期活动"),
+        self._cats_cache = None
+        self._fallback_cats = [
+            ("1", "国产视频"),
+            ("6", "国产传媒"),
+            ("2", "国产探花"),
+            ("7", "极品学生"),
+            ("8", "野战户外"),
+            ("9", "网曝黑料"),
+            ("10", "日本有码"),
         ]
 
     def getDependence(self):
@@ -78,19 +53,10 @@ class Spider:
     def action(self, action):
         return {}
 
-    def _opener_get(self):
-        if self._opener is None:
-            import urllib.request
-            import http.cookiejar
-            jar = http.cookiejar.CookieJar()
-            self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-        return self._opener
-
-    def _verify(self, force=False):
-        if self._verified and not force:
-            return True
-        data = {
-            "challenge": hex(random.getrandbits(52))[2:] + hex(int(time.time() * 1000))[2:],
+    def _verify(self):
+        chal = "%x%x" % (random.getrandbits(52), int(time.time() * 1000))
+        payload = {
+            "challenge": chal,
             "width": 1920,
             "height": 1080,
             "language": "zh-CN",
@@ -98,15 +64,15 @@ class Spider:
             "webdriver": 0,
             "timezone": "Asia/Shanghai",
         }
-        url = self.site + "/browser-check.php?t=" + str(int(time.time() * 1000))
-        h = dict(self.header)
-        h["Content-Type"] = "application/json"
-        h["Referer"] = self.site + "/verification.html?return=%2F"
+        url = self.site + "/browser-check.php?t=%d" % int(time.time() * 1000)
         if self.s is not None:
             try:
-                r = self.s.post(url, json=data, headers=h, timeout=12)
-                if r.status_code == 200:
-                    d = r.json()
+                r = self.s.post(url, json=payload, headers={"Content-Type": "application/json", "Referer": self.site + "/verification.html?return=%2F"}, timeout=12)
+                if r.status_code < 400:
+                    try:
+                        d = r.json()
+                    except Exception:
+                        d = {}
                     if isinstance(d, dict) and d.get("success") is True:
                         self._verified = True
                         return True
@@ -114,12 +80,16 @@ class Spider:
                 pass
         try:
             import urllib.request
-            req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=h, method="POST")
-            with self._opener_get().open(req, timeout=12) as resp:
+            if self._opener is None:
+                import http.cookiejar
+                self._cj = http.cookiejar.CookieJar()
+                self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cj))
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Referer": self.site + "/verification.html?return=%2F", "User-Agent": self.header["User-Agent"]})
+            with self._opener.open(req, timeout=12) as resp:
                 d = json.loads(resp.read().decode("utf-8", "ignore"))
-                if isinstance(d, dict) and d.get("success") is True:
-                    self._verified = True
-                    return True
+            if isinstance(d, dict) and d.get("success") is True:
+                self._verified = True
+                return True
         except Exception:
             pass
         return False
@@ -128,50 +98,41 @@ class Spider:
         h = dict(self.header)
         if referer:
             h["Referer"] = referer
-        if not self._verified:
-            self._verify()
-        txt = self._fetch_text(url, h)
-        if txt and "正在验证" in txt[:2000] and "<title>正在验证</title>" in txt:
-            self._verify(force=True)
-            txt = self._fetch_text(url, h)
-        return txt
-
-    def _fetch_text(self, url, h):
-        if self.s is not None:
-            try:
-                r = self.s.get(url, headers=h, timeout=12, allow_redirects=True)
-                if r.status_code < 400:
-                    if not r.encoding or r.encoding.lower() in ("iso-8859-1", "ascii"):
-                        r.encoding = "utf-8"
-                    return r.text
-            except Exception:
-                pass
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, headers=h)
-            with self._opener_get().open(req, timeout=12) as resp:
-                return resp.read().decode("utf-8", "ignore")
-        except Exception:
-            return ""
-
-    def _bytes(self, url, referer=None):
-        h = dict(self.header)
-        if referer:
-            h["Referer"] = referer
-        if self.s is not None:
-            try:
-                r = self.s.get(url, headers=h, timeout=15)
-                if r.status_code == 200 and r.content:
-                    return r.content
-            except Exception:
-                pass
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, headers=h)
-            with self._opener_get().open(req, timeout=15) as resp:
-                return resp.read()
-        except Exception:
-            return b""
+        for attempt in range(2):
+            txt = ""
+            if self.s is not None:
+                try:
+                    r = self.s.get(url, headers=h, timeout=12, allow_redirects=True)
+                    if r.status_code < 400:
+                        if not r.encoding or r.encoding.lower() in ("iso-8859-1", "ascii"):
+                            r.encoding = "utf-8"
+                        txt = r.text
+                except Exception:
+                    txt = ""
+            if not txt and self._opener is not None:
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(url, headers=h)
+                    with self._opener.open(req, timeout=12) as resp:
+                        txt = resp.read().decode("utf-8", "ignore")
+                except Exception:
+                    txt = ""
+            if not txt and self._opener is None:
+                try:
+                    import urllib.request
+                    import http.cookiejar
+                    self._cj = http.cookiejar.CookieJar()
+                    self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cj))
+                    req = urllib.request.Request(url, headers=h)
+                    with self._opener.open(req, timeout=12) as resp:
+                        txt = resp.read().decode("utf-8", "ignore")
+                except Exception:
+                    txt = ""
+            if txt and ("verification.html" in txt or "正在验证" in txt) and attempt == 0:
+                if self._verify():
+                    continue
+            return txt
+        return ""
 
     def _u(self, u):
         if not u:
@@ -186,84 +147,72 @@ class Spider:
             return (m.group(1) if m else self.site) + u
         return self.site.rstrip("/") + "/" + u.lstrip("/")
 
-    def _img(self, url):
-        if not url or _AES is None:
-            return b"", ""
-        raw = self._bytes(url)
-        if not raw:
-            return b"", ""
-        try:
-            dec = _unpad(_AES.new(self._img_key, _AES.MODE_CBC, self._img_iv).decrypt(raw), 16)
-        except Exception:
-            return b"", ""
-        if dec[:3] == b"\xff\xd8\xff":
-            return dec, "image/jpeg"
-        if dec[:4] == b"\x89PNG":
-            return dec, "image/png"
-        if dec[:4] == b"RIFF" and dec[8:12] == b"WEBP":
-            return dec, "image/webp"
-        if dec[:2] == b"\xff\xd8":
-            return dec, "image/jpeg"
-        return b"", ""
-
-    def _wrap_img(self, u):
-        if not u:
-            return ""
-        try:
-            return self.getProxyUrl() + "&url=" + quote("img:" + u)
-        except Exception:
-            return "http://127.0.0.1:9978/proxy?do=py&url=" + quote("img:" + u)
+    def _cats(self):
+        if self._cats_cache is not None:
+            return self._cats_cache
+        html = self._home if self._home is not None else self._get(self.site + "/")
+        out = []
+        seen = set()
+        if html:
+            for tid, name in re.findall(r'class="nav-item"><a href="/index\.php/vod/type/id/(\d+)\.html"[^>]*>(?:<i[^>]*></i>\s*)?([^<]{1,12})</a>', html):
+                if tid in seen:
+                    continue
+                seen.add(tid)
+                out.append((tid, name.strip()))
+        if not out:
+            out = list(self._fallback_cats)
+        self._cats_cache = out
+        return out
 
     def _items(self, html):
         out = []
         seen = set()
-        parts = re.split(r'id="post-card-(\d+)"', html)
-        for i in range(1, len(parts) - 1, 2):
-            pid = parts[i]
-            seg = parts[i + 1][:4000]
-            cov = re.search(r'(?:[xz]-(?:bg|image)-loader-url)="([^"]+)"', seg)
-            tit = re.search(r'<h2 class="post-card-title"[^>]*>([^<]+)</h2>', seg)
-            if pid in seen or not tit:
+        if not html:
+            return out
+        for bm in re.finditer(r'<a href="/index\.php/vod/play/id/(\d+)/sid/\d+/nid/\d+\.html" class="video-item">([\s\S]{0,1200}?)</a>', html):
+            vid = bm.group(1)
+            block = bm.group(2)
+            if vid in seen:
                 continue
-            seen.add(pid)
-            title = _html_unescape(tit.group(1)).strip()
-            if not title:
-                continue
-            pic = self._u(cov.group(1)) if cov else ""
+            seen.add(vid)
+            pm = re.search(r"background-image:\s*url\('([^']+)'\)", block)
+            tm = re.search(r'<div class="video-title">([^<]+)</div>', block)
+            im = re.search(r'<div class="video-info">([\s\S]*?)</div>', block)
+            remarks = ""
+            if im:
+                remarks = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", im.group(1))).strip()
             out.append({
-                "vod_id": pid,
-                "vod_name": title,
-                "vod_pic": self._wrap_img(pic) if pic else "",
-                "vod_remarks": "",
+                "vod_id": vid,
+                "vod_name": tm.group(1).strip() if tm else "",
+                "vod_pic": self._u(pm.group(1)) if pm else "",
+                "vod_remarks": remarks,
             })
         return out
 
-    def _pagecount(self, html):
-        m = re.search(r"var total\s*=\s*(\d+)", html)
-        if m:
-            return int(m.group(1))
-        pages = re.findall(r'/category/[^/]+/(\d+)/', html)
-        if pages:
-            try:
-                return max(int(n) for n in pages if int(n) < 100000)
-            except ValueError:
-                pass
-        pages = re.findall(r'/search/[^/]+/(\d+)/', html)
-        if pages:
-            try:
-                return max(int(n) for n in pages if int(n) < 100000)
-            except ValueError:
-                pass
-        return 1
+    def _pagecount(self, html, pg, items):
+        if re.search(r'<a href="[^"]*page/\d+[^"]*"[^>]*>下一页</a>', html or ""):
+            return pg + 1
+        if not items:
+            return max(1, pg - 1) if pg > 1 else 1
+        return pg
 
-    def _video_urls(self, html):
-        urls = []
-        for m in re.finditer(r'"video":\{"url":"((?:https?:)?[^"]*?\.m3u8[^"]*)"', html):
-            u = m.group(1).replace("\\/", "/")
-            if u.startswith("//"):
-                u = "https:" + u
-            urls.append(u)
-        return urls
+    _cat_limit = {"1": 40, "2": 40, "6": 25, "7": 20, "8": 20, "9": 20, "10": 20}
+
+    def _cat_url(self, tid, pg):
+        tid = str(tid)
+        if pg <= 1:
+            return self.site + "/index.php/vod/type/id/%s.html" % tid
+        return self.site + "/index.php/vod/type/id/%s/page/%d.html" % (tid, pg)
+
+    def _search_url(self, key, pg):
+        try:
+            from urllib.parse import quote
+            kw = quote(str(key))
+        except Exception:
+            kw = str(key)
+        if pg <= 1:
+            return self.site + "/index.php/vod/search.html?wd=" + kw
+        return self.site + "/index.php/vod/search/page/%d/wd/%s.html" % (pg, kw)
 
     def init(self, extend=""):
         self._extend = {}
@@ -278,29 +227,26 @@ class Spider:
                 pass
 
     def homeContent(self, filter=None):
-        cats = [{"type_id": slug, "type_name": name} for slug, name in self.cats]
-        html = self._get(self.site + "/")
-        return {"class": cats, "filters": {}, "list": self._items(html)}
+        if self._home is None:
+            self._home = self._get(self.site + "/")
+        cats = [{"type_id": tid, "type_name": name} for tid, name in self._cats()]
+        return {"class": cats, "filters": {}, "list": self._items(self._home)}
 
     def homeVideoContent(self):
-        return {"list": self._items(self._get(self.site + "/"))}
+        if self._home is None:
+            self._home = self._get(self.site + "/")
+        return {"list": self._items(self._home)}
 
     def categoryContent(self, tid, pg=1, filter=None, extend=None):
         try:
             pg = int(pg)
         except Exception:
             pg = 1
-        slug = str(tid)
-        if pg <= 1:
-            url = self.site + "/category/" + slug + "/"
-        else:
-            url = self.site + "/category/" + slug + "/" + str(pg) + "/"
-        html = self._get(url)
-        if not html:
-            return {"list": [], "page": pg, "pagecount": 1, "limit": 25, "total": 0}
+        html = self._get(self._cat_url(tid, pg))
         items = self._items(html)
-        pc = self._pagecount(html)
-        return {"list": items, "page": pg, "pagecount": pc, "limit": 25, "total": pc * 25}
+        pc = self._pagecount(html, pg, items)
+        limit = self._cat_limit.get(str(tid), len(items) if items else 40)
+        return {"list": items, "page": pg, "pagecount": pc, "limit": limit, "total": pc * limit}
 
     def detailContent(self, ids):
         vid = ids
@@ -310,94 +256,86 @@ class Spider:
         m = re.search(r"(\d+)", vid)
         if not m:
             return {"list": []}
-        pid = m.group(1)
-        url = self.site + "/archives/" + pid + "/"
+        vid = m.group(1)
+        url = self.site + "/index.php/vod/detail/id/%s.html" % vid
         html = self._get(url)
         if not html:
             return {"list": []}
         title = ""
-        tm = re.search(r'<h1[^>]*>([^<]{2,120})</h1>', html)
+        tm = re.search(r"<h1[^>]*>([^<]+)</h1>", html)
         if tm:
-            title = _html_unescape(tm.group(1)).strip()
-        if not title:
-            tm = re.search(r'<title>([^<]{2,120})</title>', html)
-            if tm:
-                title = _html_unescape(tm.group(1)).split(" | ")[0].strip()
+            title = tm.group(1).strip()
         pic = ""
-        im = re.search(r'itemprop="image" content="([^"]+)"', html)
-        if im:
-            pic = self._u(im.group(1))
+        pm = re.search(r'<div class="detail-pic[^>]*><img[^>]+src="([^"]+)"', html)
+        if pm:
+            pic = self._u(pm.group(1))
         desc = ""
-        dm = re.search(r'property="og:description" content="([^"]*)"', html)
+        dm = re.search(r'<dl class="juqing">[\s\S]*?<dd>([\s\S]*?)</dd>', html)
         if dm:
-            desc = _html_unescape(dm.group(1)).strip()
-        urls = self._video_urls(html)
+            desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", dm.group(1))).strip()
+            desc = desc.replace("详细剧情", "").strip()
+        if not desc:
+            desc = title
         eps = []
-        for idx in range(len(urls)):
-            eps.append("第" + str(idx + 1) + "集$" + url + "?ep=" + str(idx + 1))
-        return {"list": [{"vod_id": pid, "vod_name": title, "vod_pic": self._wrap_img(pic) if pic else "",
+        seen = set()
+        for pm in re.finditer(r'<a href="(/index\.php/vod/play/id/\d+/sid/\d+/nid/\d+\.html)"[^>]*>([^<]{1,15})</a>', html):
+            href, name = pm.group(1), pm.group(2).strip()
+            if href in seen:
+                continue
+            seen.add(href)
+            eps.append("%s$%s" % (name or "HD", self._u(href)))
+        return {"list": [{"vod_id": vid, "vod_name": title, "vod_pic": pic,
                           "vod_content": desc, "vod_play_from": self.name,
                           "vod_play_url": "#".join(eps)}]}
 
     def searchContent(self, key, quick=False, pg="1"):
-        key = str(key or "").strip()
-        if not key:
-            return {"list": []}
         try:
             pg = int(pg)
         except Exception:
             pg = 1
-        q = quote(key)
-        if pg <= 1:
-            url = self.site + "/search/" + q + "/"
-        else:
-            url = self.site + "/search/" + q + "/" + str(pg) + "/"
-        html = self._get(url)
-        if not html:
+        if not str(key or "").strip():
             return {"list": []}
-        return {"list": self._items(html)}
+        html = self._get(self._search_url(key, pg))
+        items = self._items(html)
+        pc = self._pagecount(html, pg, items)
+        return {"list": items, "page": pg, "pagecount": pc, "limit": 30, "total": pc * 30}
 
     def playerContent(self, flag, ids, vipFlags=None):
         url = ids
         if isinstance(ids, (list, tuple)):
             url = ids[0] if ids else ""
         url = str(url or "").strip()
-        m = re.search(r"/archives/(\d+)/", url)
-        if not m:
-            m = re.search(r"(\d+)", url)
-        if not m:
+        if not url:
             return {"parse": 0, "url": "", "header": dict(self.header)}
-        pid = m.group(1)
-        ep = 1
-        em = re.search(r"[?&]ep=(\d+)", url)
-        if em:
-            try:
-                ep = int(em.group(1))
-            except Exception:
-                ep = 1
-        post_url = self.site + "/archives/" + pid + "/"
-        html = self._get(post_url, referer=self.site + "/")
-        if not html:
+        if not url.startswith("http"):
+            if re.match(r"^\d+$", url):
+                url = self.site + "/index.php/vod/play/id/%s/sid/1/nid/1.html" % url
+            else:
+                url = self._u(url)
+        html = self._get(url, referer=self.site + "/")
+        found = ""
+        if html:
+            m = re.search(r"player_aaaa\s*=\s*(\{.+?\})\s*;?\s*<", html, re.S)
+            if not m:
+                m = re.search(r"player_aaaa\s*=\s*(\{.+?\})", html, re.S)
+            if m:
+                try:
+                    d = json.loads(m.group(1))
+                    if isinstance(d, dict) and d.get("url"):
+                        found = d["url"]
+                except Exception:
+                    pass
+            if not found:
+                m2 = re.search(r'(https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*)', html)
+                if m2:
+                    found = m2.group(1)
+        if not found:
             return {"parse": 0, "url": "", "header": dict(self.header)}
-        urls = self._video_urls(html)
-        if not urls or ep < 1 or ep > len(urls):
-            return {"parse": 0, "url": "", "header": dict(self.header)}
-        stream = urls[ep - 1]
-        return {"parse": 0, "url": stream, "header": {"User-Agent": self.header["User-Agent"], "Referer": post_url}}
-
-    def localProxy(self, param):
-        try:
-            p = json.loads(param) if isinstance(param, str) else param
-            u = p.get("url", "") if isinstance(p, dict) else ""
-            if u.startswith("img:"):
-                data, ct = self._img(u[4:])
-                if data:
-                    return [200, ct, data, {"Content-Length": str(len(data))}]
-            return [404, "text/plain", b"", {}]
-        except Exception:
-            return [502, "text/plain", b"", {}]
-
-
-def _html_unescape(s):
-    import html as _h
-    return _h.unescape(s) if s else s
+        found = found.strip()
+        if found.startswith("//"):
+            found = "https:" + found
+        elif not found.startswith("http"):
+            found = self._u(found)
+        hdr = dict(self.header)
+        hdr["Referer"] = url
+        return {"parse": 0, "url": found, "header": hdr}

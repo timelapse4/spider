@@ -1,39 +1,30 @@
-# -*- coding: utf-8 -*-
-# TG交流群 https://t.me/hshsjk9
-
-import re, json, time, random
+import re, json, base64
 try:
     import requests as _requests
 except Exception:
     _requests = None
 
 
+def _html_unescape(s):
+    import html as _h
+    return _h.unescape(s) if s else s
+
+
 class Spider:
     def __init__(self):
-        self.site = "https://78vc9ew4.niu16.top"
-        self.name = "腾迅影视"
+        self.site = "https://vhd823jr7ypw.ngyouxi.com"
+        self.name = "巨婴云播"
         self.header = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-            "Referer": self.site + "/",
+            "Referer": self.site,
             "Accept-Language": "zh-CN,zh;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         self.s = self.session = self.sess = _requests.Session() if _requests else None
         self._extend = {}
         self._home = None
-        self._verified = False
-        self._cj = None
-        self._opener = None
         self._cats_cache = None
-        self._fallback_cats = [
-            ("1", "国产视频"),
-            ("6", "国产传媒"),
-            ("2", "国产探花"),
-            ("7", "极品学生"),
-            ("8", "野战户外"),
-            ("9", "网曝黑料"),
-            ("10", "日本有码"),
-        ]
+        self._pc_cache = {}
 
     def getDependence(self):
         return []
@@ -53,86 +44,24 @@ class Spider:
     def action(self, action):
         return {}
 
-    def _verify(self):
-        chal = "%x%x" % (random.getrandbits(52), int(time.time() * 1000))
-        payload = {
-            "challenge": chal,
-            "width": 1920,
-            "height": 1080,
-            "language": "zh-CN",
-            "platform": "Win32",
-            "webdriver": 0,
-            "timezone": "Asia/Shanghai",
-        }
-        url = self.site + "/browser-check.php?t=%d" % int(time.time() * 1000)
-        if self.s is not None:
-            try:
-                r = self.s.post(url, json=payload, headers={"Content-Type": "application/json", "Referer": self.site + "/verification.html?return=%2F"}, timeout=12)
-                if r.status_code < 400:
-                    try:
-                        d = r.json()
-                    except Exception:
-                        d = {}
-                    if isinstance(d, dict) and d.get("success") is True:
-                        self._verified = True
-                        return True
-            except Exception:
-                pass
-        try:
-            import urllib.request
-            if self._opener is None:
-                import http.cookiejar
-                self._cj = http.cookiejar.CookieJar()
-                self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cj))
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "Referer": self.site + "/verification.html?return=%2F", "User-Agent": self.header["User-Agent"]})
-            with self._opener.open(req, timeout=12) as resp:
-                d = json.loads(resp.read().decode("utf-8", "ignore"))
-            if isinstance(d, dict) and d.get("success") is True:
-                self._verified = True
-                return True
-        except Exception:
-            pass
-        return False
-
     def _get(self, url, referer=None):
         h = dict(self.header)
         if referer:
             h["Referer"] = referer
-        for attempt in range(2):
-            txt = ""
-            if self.s is not None:
-                try:
-                    r = self.s.get(url, headers=h, timeout=12, allow_redirects=True)
-                    if r.status_code < 400:
-                        if not r.encoding or r.encoding.lower() in ("iso-8859-1", "ascii"):
-                            r.encoding = "utf-8"
-                        txt = r.text
-                except Exception:
-                    txt = ""
-            if not txt and self._opener is not None:
-                try:
-                    import urllib.request
-                    req = urllib.request.Request(url, headers=h)
-                    with self._opener.open(req, timeout=12) as resp:
-                        txt = resp.read().decode("utf-8", "ignore")
-                except Exception:
-                    txt = ""
-            if not txt and self._opener is None:
-                try:
-                    import urllib.request
-                    import http.cookiejar
-                    self._cj = http.cookiejar.CookieJar()
-                    self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cj))
-                    req = urllib.request.Request(url, headers=h)
-                    with self._opener.open(req, timeout=12) as resp:
-                        txt = resp.read().decode("utf-8", "ignore")
-                except Exception:
-                    txt = ""
-            if txt and ("verification.html" in txt or "正在验证" in txt) and attempt == 0:
-                if self._verify():
-                    continue
-            return txt
-        return ""
+        if self.s is not None:
+            try:
+                r = self.s.get(url, headers=h, timeout=12, allow_redirects=True)
+                if r.status_code < 400:
+                    return r.text
+            except Exception:
+                pass
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers=h)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                return resp.read().decode("utf-8", "ignore")
+        except Exception:
+            return ""
 
     def _u(self, u):
         if not u:
@@ -147,72 +76,119 @@ class Spider:
             return (m.group(1) if m else self.site) + u
         return self.site.rstrip("/") + "/" + u.lstrip("/")
 
+    def _dec_page(self, raw):
+        if not raw:
+            return ""
+        try:
+            from urllib.parse import unquote
+            m = re.search(r'var a="([^"]+)"', raw)
+            if not m:
+                return raw
+            s = unquote(m.group(1))
+            b = base64.b64decode(s)
+            return unquote(b.decode("utf-8", "ignore"))
+        except Exception:
+            return raw
+
+    def _dec_api(self, raw):
+        try:
+            from urllib.parse import unquote
+            j = json.loads(raw)
+            c = j.get("content", "")
+            if not c:
+                return ""
+            b = base64.b64decode(c)
+            return unquote(b.decode("utf-8", "ignore"))
+        except Exception:
+            return ""
+
+    def _get_dec(self, url, referer=None):
+        return self._dec_page(self._get(url, referer=referer))
+
+    def _home_html(self):
+        if self._home is None:
+            self._home = self._get_dec(self.site)
+        return self._home or ""
+
     def _cats(self):
         if self._cats_cache is not None:
             return self._cats_cache
-        html = self._home if self._home is not None else self._get(self.site + "/")
+        html = self._home_html()
         out = []
         seen = set()
-        if html:
-            for tid, name in re.findall(r'class="nav-item"><a href="/index\.php/vod/type/id/(\d+)\.html"[^>]*>(?:<i[^>]*></i>\s*)?([^<]{1,12})</a>', html):
-                if tid in seen:
-                    continue
-                seen.add(tid)
-                out.append((tid, name.strip()))
-        if not out:
-            out = list(self._fallback_cats)
+        for m in re.finditer(r'<a[^>]+href="/list/video/(CC[0-9A-Za-z]+)\.html"[^>]*>(.*?)</a>', html, re.S):
+            cid = m.group(1)
+            name = _html_unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
+            if not name or name.startswith("更多") or len(name) > 16:
+                continue
+            if cid in seen:
+                continue
+            seen.add(cid)
+            out.append({"type_id": cid, "type_name": name})
         self._cats_cache = out
         return out
+
+    GROUPS = [("精选推荐", 0, 6), ("国产AV", 6, 10), ("日本AV", 16, 10), ("欧美AV", 26, 4), ("H动漫", 30, 6), ("国产精品组", 36, 7), ("影视组", 43, 6)]
+
+    def _group_classes(self):
+        return [{"type_id": "g:" + str(i), "type_name": n} for i, (n, _, _) in enumerate(self.GROUPS)]
+
+    def _group_filters(self):
+        flat = self._cats()
+        fl = {}
+        for i, (n, st, cnt) in enumerate(self.GROUPS):
+            subs = flat[st:st + cnt]
+            if not subs:
+                continue
+            fl["g:" + str(i)] = [{"key": "sub", "name": "分类", "value": [{"n": c["type_name"], "v": c["type_id"]} for c in subs]}]
+        return fl
+
+    def _resolve_cid(self, tid, extend=None):
+        tid = str(tid).strip()
+        m = re.search(r'(CC[0-9A-Za-z]+)', tid)
+        if m:
+            return m.group(1)
+        gm = re.match(r'g:(\d+)', tid)
+        if gm:
+            gi = int(gm.group(1))
+            flat = self._cats()
+            if 0 <= gi < len(self.GROUPS):
+                _, st, cnt = self.GROUPS[gi]
+                subs = flat[st:st + cnt]
+                if subs:
+                    sel = None
+                    if isinstance(extend, dict):
+                        sel = extend.get("sub")
+                    if sel:
+                        sm = re.search(r'(CC[0-9A-Za-z]+)', str(sel))
+                        if sm:
+                            return sm.group(1)
+                    return subs[0]["type_id"]
+        return tid
 
     def _items(self, html):
         out = []
         seen = set()
         if not html:
             return out
-        for bm in re.finditer(r'<a href="/index\.php/vod/play/id/(\d+)/sid/\d+/nid/\d+\.html" class="video-item">([\s\S]{0,1200}?)</a>', html):
-            vid = bm.group(1)
-            block = bm.group(2)
+        for bm in re.finditer(r'<a[^>]*class=["\']?label vlink["\']?[^>]*>([\s\S]*?)</a>', html):
+            block = bm.group(0)
+            hm = re.search(r'href=["\']?(/video/[^"\'\s>]+)["\']?', block)
+            im = re.search(r'<img[^>]+src=["\']?([^"\'\s>]+)["\']?', block)
+            tm = re.search(r'<div[^>]*class=["\']?title["\']?>([^<]+)</div>', block)
+            if not (hm and tm):
+                continue
+            vid = self._u(hm.group(1))
             if vid in seen:
                 continue
             seen.add(vid)
-            pm = re.search(r"background-image:\s*url\('([^']+)'\)", block)
-            tm = re.search(r'<div class="video-title">([^<]+)</div>', block)
-            im = re.search(r'<div class="video-info">([\s\S]*?)</div>', block)
-            remarks = ""
-            if im:
-                remarks = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", im.group(1))).strip()
             out.append({
                 "vod_id": vid,
-                "vod_name": tm.group(1).strip() if tm else "",
-                "vod_pic": self._u(pm.group(1)) if pm else "",
-                "vod_remarks": remarks,
+                "vod_name": _html_unescape(tm.group(1)).strip(),
+                "vod_pic": self._u(im.group(1)) if im else "",
+                "vod_remarks": "",
             })
         return out
-
-    def _pagecount(self, html, pg, items):
-        if re.search(r'<a href="[^"]*page/\d+[^"]*"[^>]*>下一页</a>', html or ""):
-            return pg + 1
-        if not items:
-            return max(1, pg - 1) if pg > 1 else 1
-        return pg
-
-    _cat_limit = {"1": 40, "2": 40, "6": 25, "7": 20, "8": 20, "9": 20, "10": 20}
-
-    def _cat_url(self, tid, pg):
-        tid = str(tid)
-        if pg <= 1:
-            return self.site + "/index.php/vod/type/id/%s.html" % tid
-        return self.site + "/index.php/vod/type/id/%s/page/%d.html" % (tid, pg)
-
-    def _search_url(self, key, pg):
-        try:
-            from urllib.parse import quote
-            kw = quote(str(key))
-        except Exception:
-            kw = str(key)
-        if pg <= 1:
-            return self.site + "/index.php/vod/search.html?wd=" + kw
-        return self.site + "/index.php/vod/search/page/%d/wd/%s.html" % (pg, kw)
 
     def init(self, extend=""):
         self._extend = {}
@@ -227,65 +203,93 @@ class Spider:
                 pass
 
     def homeContent(self, filter=None):
-        if self._home is None:
-            self._home = self._get(self.site + "/")
-        cats = [{"type_id": tid, "type_name": name} for tid, name in self._cats()]
-        return {"class": cats, "filters": {}, "list": self._items(self._home)}
+        cats = self._group_classes()
+        filters = self._group_filters()
+        vod_list = self._items(self._home_html())
+        return {"class": cats, "filters": filters, "list": vod_list}
 
     def homeVideoContent(self):
-        if self._home is None:
-            self._home = self._get(self.site + "/")
-        return {"list": self._items(self._home)}
+        return {"list": self._items(self._home_html())}
 
     def categoryContent(self, tid, pg=1, filter=None, extend=None):
         try:
             pg = int(pg)
         except Exception:
             pg = 1
-        html = self._get(self._cat_url(tid, pg))
-        items = self._items(html)
-        pc = self._pagecount(html, pg, items)
-        limit = self._cat_limit.get(str(tid), len(items) if items else 40)
-        return {"list": items, "page": pg, "pagecount": pc, "limit": limit, "total": pc * limit}
+        tid = str(tid).strip()
+        cid = self._resolve_cid(tid, extend)
+        list_url = self.site.rstrip("/") + "/list/video/" + cid + ".html"
+        if pg == 1:
+            html = self._get_dec(list_url)
+            if not html:
+                return {"list": [], "page": pg, "pagecount": 1, "limit": 20, "total": 0}
+            vod_list = self._items(html)
+            pagecount = 1
+            pm = re.search(r'list_page\s*=\s*"(\d+)"', html)
+            if pm:
+                pagecount = int(pm.group(1))
+            elif len(vod_list) >= 20:
+                pagecount = pg + 1
+            self._pc_cache[cid] = pagecount
+            return {"list": vod_list, "page": pg, "pagecount": pagecount, "limit": 20, "total": pagecount * 20}
+        api_url = self.site.rstrip("/") + "/xapi/list/loadmore/" + cid + "/video/" + str(pg)
+        raw = self._get(api_url, referer=list_url)
+        html = self._dec_api(raw)
+        if not html:
+            return {"list": [], "page": pg, "pagecount": 1, "limit": 20, "total": 0}
+        vod_list = self._items(html)
+        pagecount = self._pc_cache.get(cid, 0)
+        if not pagecount:
+            home = self._get_dec(list_url)
+            pm = re.search(r'list_page\s*=\s*"(\d+)"', home) if home else None
+            pagecount = int(pm.group(1)) if pm else (pg + 1 if len(vod_list) >= 20 else pg)
+            self._pc_cache[cid] = pagecount
+        return {"list": vod_list, "page": pg, "pagecount": pagecount, "limit": 20, "total": pagecount * 20}
 
     def detailContent(self, ids):
         vid = ids
         if isinstance(ids, (list, tuple)):
             vid = ids[0] if ids else ""
         vid = str(vid).strip()
-        m = re.search(r"(\d+)", vid)
-        if not m:
+        m = re.search(r'/video/([A-Za-z0-9]+)(?:/\d+)?\.html', vid)
+        if m:
+            vid = m.group(1)
+        elif re.search(r'^[A-Za-z0-9]+$', vid):
+            pass
+        else:
             return {"list": []}
-        vid = m.group(1)
-        url = self.site + "/index.php/vod/detail/id/%s.html" % vid
-        html = self._get(url)
+        url = self.site.rstrip("/") + "/video/" + vid + ".html"
+        html = self._get_dec(url)
         if not html:
             return {"list": []}
         title = ""
-        tm = re.search(r"<h1[^>]*>([^<]+)</h1>", html)
+        tm = re.search(r'<div class="video_info_box">\s*<div class="title">(.*?)</div>', html, re.S)
+        if not tm:
+            tm = re.search(r'<div class="title">(.*?)</div>', html, re.S)
         if tm:
-            title = tm.group(1).strip()
+            title = _html_unescape(re.sub(r"<[^>]+>", "", tm.group(1))).strip()
+            title = re.sub(r"\s*-\s*第\d+集\s*$", "", title)
         pic = ""
-        pm = re.search(r'<div class="detail-pic[^>]*><img[^>]+src="([^"]+)"', html)
-        if pm:
-            pic = self._u(pm.group(1))
-        desc = ""
-        dm = re.search(r'<dl class="juqing">[\s\S]*?<dd>([\s\S]*?)</dd>', html)
+        vurl = ""
+        dm = re.search(r'id="dplayers"[^>]*>', html)
         if dm:
-            desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", dm.group(1))).strip()
-            desc = desc.replace("详细剧情", "").strip()
-        if not desc:
-            desc = title
+            tag = dm.group(0)
+            pm = re.search(r'vpic="([^"]*)"', tag)
+            if pm:
+                pic = self._u(pm.group(1))
+            um = re.search(r'vurl="([^"]*)"', tag)
+            if um:
+                vurl = _html_unescape(um.group(1)).strip()
         eps = []
-        seen = set()
-        for pm in re.finditer(r'<a href="(/index\.php/vod/play/id/\d+/sid/\d+/nid/\d+\.html)"[^>]*>([^<]{1,15})</a>', html):
-            href, name = pm.group(1), pm.group(2).strip()
-            if href in seen:
-                continue
-            seen.add(href)
-            eps.append("%s$%s" % (name or "HD", self._u(href)))
+        if vurl:
+            parts = [p.strip() for p in vurl.split("#") if p.strip()]
+            if len(parts) == 1:
+                eps.append("正片$" + self._u(parts[0]))
+            else:
+                for i, p in enumerate(parts):
+                    eps.append("第%d集$%s" % (i + 1, self._u(p)))
         return {"list": [{"vod_id": vid, "vod_name": title, "vod_pic": pic,
-                          "vod_content": desc, "vod_play_from": self.name,
+                          "vod_content": "", "vod_play_from": self.name,
                           "vod_play_url": "#".join(eps)}]}
 
     def searchContent(self, key, quick=False, pg="1"):
@@ -293,12 +297,16 @@ class Spider:
             pg = int(pg)
         except Exception:
             pg = 1
-        if not str(key or "").strip():
+        try:
+            from urllib.parse import quote
+            url = self.site.rstrip("/") + "/xapi/search/data/" + str(pg) + "/video/" + quote(str(key))
+        except Exception:
             return {"list": []}
-        html = self._get(self._search_url(key, pg))
-        items = self._items(html)
-        pc = self._pagecount(html, pg, items)
-        return {"list": items, "page": pg, "pagecount": pc, "limit": 30, "total": pc * 30}
+        raw = self._get(url, referer=self.site + "/search.html")
+        html = self._dec_api(raw)
+        if not html:
+            return {"list": []}
+        return {"list": self._items(html)}
 
     def playerContent(self, flag, ids, vipFlags=None):
         url = ids
@@ -308,34 +316,40 @@ class Spider:
         if not url:
             return {"parse": 0, "url": "", "header": dict(self.header)}
         if not url.startswith("http"):
-            if re.match(r"^\d+$", url):
-                url = self.site + "/index.php/vod/play/id/%s/sid/1/nid/1.html" % url
-            else:
-                url = self._u(url)
-        html = self._get(url, referer=self.site + "/")
-        found = ""
-        if html:
-            m = re.search(r"player_aaaa\s*=\s*(\{.+?\})\s*;?\s*<", html, re.S)
-            if not m:
-                m = re.search(r"player_aaaa\s*=\s*(\{.+?\})", html, re.S)
-            if m:
-                try:
-                    d = json.loads(m.group(1))
-                    if isinstance(d, dict) and d.get("url"):
-                        found = d["url"]
-                except Exception:
-                    pass
-            if not found:
-                m2 = re.search(r'(https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*)', html)
-                if m2:
-                    found = m2.group(1)
-        if not found:
+            url = self._u(url)
+        u = url.lower()
+        if u.endswith((".m3u8", ".mp4", ".flv", ".mkv", ".ts", ".avi")) or "m3u8" in u:
+            return {"parse": 0, "url": url, "header": dict(self.header)}
+        m = re.search(r'/video/([A-Za-z0-9]+)(?:/(\d+))?\.html', url)
+        if not m:
             return {"parse": 0, "url": "", "header": dict(self.header)}
-        found = found.strip()
-        if found.startswith("//"):
-            found = "https:" + found
-        elif not found.startswith("http"):
-            found = self._u(found)
-        hdr = dict(self.header)
-        hdr["Referer"] = url
-        return {"parse": 0, "url": found, "header": hdr}
+        vid = m.group(1)
+        ep = int(m.group(2)) if m.group(2) else 1
+        html = self._get_dec(self.site.rstrip("/") + "/video/" + vid + ".html")
+        dm = re.search(r'id="dplayers"[^>]*vurl="([^"]*)"', html) if html else None
+        if not dm:
+            return {"parse": 0, "url": "", "header": dict(self.header)}
+        parts = [p.strip() for p in _html_unescape(dm.group(1)).split("#") if p.strip()]
+        if not parts:
+            return {"parse": 0, "url": "", "header": dict(self.header)}
+        idx = ep - 1 if 0 < ep <= len(parts) else 0
+        return {"parse": 0, "url": self._u(parts[idx]), "header": dict(self.header)}
+
+    def localProxy(self, param):
+        u = param.get("url", "") if isinstance(param, dict) else ""
+        if not u:
+            return [403, "text/plain", b"", None]
+        h = dict(self.header)
+        if self.s is not None:
+            try:
+                r = self.s.get(u, headers=h, timeout=15)
+                return [200, r.headers.get("Content-Type", "application/octet-stream"), r.content, None]
+            except Exception:
+                pass
+        try:
+            import urllib.request
+            req = urllib.request.Request(u, headers=h)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return [200, resp.headers.get("Content-Type", "application/octet-stream"), resp.read(), None]
+        except Exception:
+            return [403, "text/plain", b"", None]
